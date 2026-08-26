@@ -125,7 +125,7 @@ def find_dataset_in_moabb(
 class _BaseMoabb(studies.Study):
     _dataset_kwargs: tp.ClassVar[dict[str, tp.Any]] = {}
     event_id: tp.ClassVar[dict[str, tp.Any]] = {}
-    requirements: tp.ClassVar[tuple[str, ...]] = ("moabb>=1.6.0",)
+    requirements: tp.ClassVar[tuple[str, ...]] = ("moabb>=1.6.1",)
 
     def _rename_numeric_descriptions(self, events_df: pd.DataFrame) -> None:
         """Auto-rename numeric descriptions inferred from event_id keys.
@@ -769,18 +769,6 @@ class Cattan2019Passive(_BaseMoabb):
         data_shape=(16, 412160),
         frequency=512.0,
     )
-
-    def _load_raw(self, timeline: dict[str, tp.Any]) -> mne.io.RawArray:
-        raw = super()._load_raw(timeline)
-        # Guard against the lru_cache returning the same mutable RawArray:
-        # only rename channels that haven't been renamed yet.
-        rename = {
-            k: v for k, v in {"Fc5": "FC5", "Fc6": "FC6"}.items() if k in raw.ch_names
-        }
-        if rename:
-            raw.rename_channels(rename)
-        raw.set_montage("standard_1020", on_missing="warn")
-        return raw
 
     def _load_timeline_events(self, timeline: dict[str, tp.Any]) -> pd.DataFrame:
         """Extend Stimulus durations to span from one marker to the next.
@@ -3552,17 +3540,6 @@ class Srisrisawang2024Simultaneous(_BaseMoabb):
         "right_fast_near": 15,
         "right_fast_far": 16,
     }
-    # Non-brain channels (motion tracking, boolean validity flag, and target
-    # positions from the reaching task) that need their type corrected to misc.
-    _NON_EEG_CHANNELS: tp.ClassVar[dict[str, str]] = {
-        "x": "misc",
-        "y": "misc",
-        "vx": "misc",
-        "vy": "misc",
-        "validity": "misc",
-        "targetPosX": "misc",
-        "targetPoxY": "misc",  # typo in original data (should be targetPosY)
-    }
     _info: tp.ClassVar[studies.StudyInfo] = studies.StudyInfo(
         num_timelines=20,
         num_subjects=20,
@@ -3571,15 +3548,6 @@ class Srisrisawang2024Simultaneous(_BaseMoabb):
         data_shape=(60, 4115020),
         frequency=500.0,
     )
-
-    def _load_raw(self, timeline: dict[str, tp.Any]) -> mne.io.RawArray:
-        raw = super()._load_raw(timeline)
-        mapping = {
-            ch: t for ch, t in self._NON_EEG_CHANNELS.items() if ch in raw.ch_names
-        }
-        if mapping:
-            raw.set_channel_types(mapping)
-        return raw
 
 
 class Scherer2012Brain(_BaseMoabb):
