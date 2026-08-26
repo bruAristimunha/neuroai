@@ -74,39 +74,6 @@ logger = logging.getLogger(__name__)
 logger.propagate = False
 
 
-def _patch_figshare_file_list_cache() -> None:
-    """Cache ``moabb.datasets.download.fs_get_file_list`` to avoid repeated
-    Figshare API calls when data is already on disk.  MOABB's MAMEM loaders
-    call the API on *every* ``get_data`` invocation, which triggers 403 rate
-    limits from datacenter IPs."""
-    try:
-        from moabb.datasets import (  # type: ignore[import-untyped,import-not-found]
-            download as _dl,
-        )
-
-        if not getattr(_dl.fs_get_file_list, "_patched", False):
-            _orig = _dl.fs_get_file_list
-
-            @lru_cache(maxsize=32)
-            def _cached_fs_get_file_list(article_id, version=None):  # type: ignore[no-untyped-def]
-                return _orig(article_id, version=version)
-
-            _cached_fs_get_file_list._patched = True  # type: ignore[attr-defined]
-            _dl.fs_get_file_list = _cached_fs_get_file_list
-            # Also patch in ssvep_mamem where it's imported directly
-            try:
-                from moabb.datasets import ssvep_mamem as _mamem
-
-                _mamem.fs_get_file_list = _cached_fs_get_file_list
-            except (ImportError, AttributeError):
-                pass
-    except ImportError:
-        pass
-
-
-_patch_figshare_file_list_cache()
-
-
 # Module-level bounded cache used by classes that bypass _get_cached_moabb_data
 # (e.g. Romani2025Brainform caches raw objects directly).
 _moabb_data_cache: OrderedDict[tuple[str, ...], tp.Any] = OrderedDict()
@@ -158,7 +125,7 @@ def find_dataset_in_moabb(
 class _BaseMoabb(studies.Study):
     _dataset_kwargs: tp.ClassVar[dict[str, tp.Any]] = {}
     event_id: tp.ClassVar[dict[str, tp.Any]] = {}
-    requirements: tp.ClassVar[tuple[str, ...]] = ("moabb>=1.5.0",)
+    requirements: tp.ClassVar[tuple[str, ...]] = ("moabb>=1.6.0",)
 
     def _rename_numeric_descriptions(self, events_df: pd.DataFrame) -> None:
         """Auto-rename numeric descriptions inferred from event_id keys.
@@ -2370,126 +2337,15 @@ class Liu2024Eeg(_BaseMoabb):
     )
 
 
-def _martinez_cagigal_convert_to_mne_format(  # type: ignore[no-untyped-def]
-    self, path, true_labels=None
-):
-    """Patched ``_convert_to_mne_format`` for MartinezCagigal2023Checker and MartinezCagigal2023Pary.
-
-    Upstream MOABB writes ``np.unique(trial_idx)`` (per-recording trial index
-    ``0..n_trials-1``) into ``stim_trial`` for these two datasets, instead
-    of the attended command id. That breaks downstream multiclass
-    classification across recordings as the same marker corresponds to
-    different attended commands. Every other c-VEP dataset in MOABB
-    (``CabreraCastillos2023*``, ``Thielen2015``, ``Thielen2021``) writes the
-    attended-symbol id, so this patch brings the Martinez-Cagigal datasets
-    in line with the rest of the c-VEP collection.
-
-    Implementation: call the original upstream method, then post-process
-    the resulting ``Raw`` to (1) replace ``stim_trial`` markers with
-    ``command_id + 200`` and (2) augment the existing ``_trial_meta``
-    annotation extras with a ``command_id`` field (preserving ``trial_id``).
-    The ``stim_epoch`` channel is left untouched: its codebook columns are
-    indexed by the per-recording ``trial_idx``, which is correct.
-    """
-    from moabb.datasets.utils import (  # type: ignore[import-untyped,import-not-found]
-        add_stim_channel_trial,
-    )
-
-    raw = type(self)._upstream_convert_to_mne_format(self, path, true_labels)
-
-    cvep_data = self._trim_unfinished_trial(
-        self._load_bson_recording(path)["cvepspellerdata"]
-    )
-    trial_idx_arr = np.array(cvep_data["trial_idx"], dtype=int)
-    unique_trials = np.unique(trial_idx_arr)
-
-    if cvep_data["mode"] == "train":
-        cmd_arr = np.array(cvep_data["command_idx"], dtype=int)
-        command_ids = np.array(
-            [int(cmd_arr[np.where(trial_idx_arr == t)[0][0]]) for t in unique_trials],
-            dtype=int,
-        )
-    else:
-        assert true_labels is not None
-        label_to_cmd = {
-            item["label"]: int(c) for c, item in cvep_data["commands_info"][0].items()
-        }
-        command_ids = np.array(
-            [label_to_cmd[true_labels[int(t)]] for t in unique_trials], dtype=int
-        )
-
-    trial_events = mne.find_events(
-        raw, stim_channel="stim_trial", shortest_event=0, verbose=False
-    )
-    assert len(trial_events) == len(command_ids), (
-        f"stim_trial has {len(trial_events)} events but BSON has "
-        f"{len(command_ids)} trials"
-    )
-    raw.drop_channels(["stim_trial"])
-    raw = add_stim_channel_trial(raw, trial_events[:, 0], command_ids, offset=200)
-
-    raw.annotations.extras = [
-        {**(extra or {}), "command_id": int(cid)}
-        for extra, cid in zip(raw.annotations.extras, command_ids)
-    ]
-    return raw
-
-
-_martinez_cagigal_convert_to_mne_format._neuralhub_command_id_patch = True  # type: ignore[attr-defined]
-
-
 class _MartinezCagigalCvepBase(_BaseCvepTrialMoabb):
     """Shared base for the two Martinez-Cagigal 2023 c-VEP datasets.
 
-    Both upstream MOABB classes (``MartinezCagigal2023Checker`` and
-    ``MartinezCagigal2023Pary``) write per-recording trial indices into
-    the ``stim_trial`` channel instead of the attended command id. This
-    base class lazily replaces ``_convert_to_mne_format`` on the upstream
-    class the first time a Martinez-Cagigal recording is loaded, so the
-    fix is owned by the dataset that needs it (no import-time side
-    effects on the rest of the module).
-
-    The replacement is implemented in
-    :func:`_martinez_cagigal_convert_to_mne_format`; the patch is
-    idempotent (guarded by a sentinel attribute on the bound method).
+    ``stim_trial`` carries the attended command id (offset 200), matching
+    the rest of the MOABB c-VEP collection; MOABB >= 1.6.0 writes it that
+    way upstream.
     """
 
     _presentation_rate: tp.ClassVar[float] = 120.0
-    _moabb_patched: tp.ClassVar[bool] = False
-
-    @classmethod
-    def _ensure_moabb_patched(cls) -> None:
-        if _MartinezCagigalCvepBase._moabb_patched:
-            return
-        try:
-            from moabb.datasets import (  # type: ignore[import-untyped,import-not-found]
-                martinezcagigal2023_checker_cvep as _checker_mod,
-            )
-            from moabb.datasets import (
-                martinezcagigal2023_pary_cvep as _pary_mod,
-            )
-        except ImportError:
-            return
-        for mod, cls_name in (
-            (_checker_mod, "MartinezCagigal2023Checker"),
-            (_pary_mod, "MartinezCagigal2023Pary"),
-        ):
-            upstream_cls = getattr(mod, cls_name, None)
-            if upstream_cls is None:
-                continue
-            existing = getattr(upstream_cls, "_convert_to_mne_format", None)
-            if existing is None or getattr(
-                existing, "_neuralhub_command_id_patch", False
-            ):
-                continue
-            # Save the original so the patched method can call back into it.
-            upstream_cls._upstream_convert_to_mne_format = existing
-            upstream_cls._convert_to_mne_format = _martinez_cagigal_convert_to_mne_format
-        _MartinezCagigalCvepBase._moabb_patched = True
-
-    def _load_raw(self, timeline: dict[str, tp.Any]) -> mne.io.RawArray:
-        type(self)._ensure_moabb_patched()
-        return super()._load_raw(timeline)
 
 
 class MartinezCagigal2023Dataset(_MartinezCagigalCvepBase):
@@ -2929,22 +2785,6 @@ class Reichert2020Impact(_BaseMoabb):
     contralateral to ``PO7`` (i.e. attended-right) and ``NonTarget``
     otherwise.  This brings the per-subject event count from 120 to ~1200
     and restores the canonical N2pc trial structure.
-
-    We also override :meth:`_load_raw` to fix a layout bug in MOABB's
-    ``BNCI2020_002._convert_attention_shift`` (in
-    ``moabb/datasets/bnci/bnci_2020.py``).  The raw EEG comes out of
-    ``scipy.io.loadmat`` as an F-contiguous array of shape
-    ``(n_channels, n_samples_per_trial, n_trials)``, and MOABB flattens it
-    to a continuous ``(n_channels, n_samples_per_trial * n_trials)`` array
-    via ``bciexp.data.reshape(n_channels, -1)``.  Because the source array
-    is F-contiguous, the default C-order reshape produces a *trial-fastest*
-    layout (``flat[c, k] = data[c, k // n_trials, k % n_trials]``) instead
-    of the trial-major layout that MOABB's per-trial markers and our
-    per-stimulus events both assume.  The correct reshape is
-    ``data.transpose(0, 2, 1).reshape(n_channels, -1)``.  Without this
-    patch, every per-stimulus epoch is sampled from the wrong trial and
-    the wrong sample offset, the canonical N2pc is invisible, and
-    per-stim Target/NonTarget decoding sits at chance.
     """
 
     aliases: tp.ClassVar[tuple[str, ...]] = ("BNCI2020_002",)
@@ -2993,40 +2833,6 @@ class Reichert2020Impact(_BaseMoabb):
             / "002-2020"
             / f"P{subject:02d}.mat"
         )
-
-    def _load_raw(self, timeline: dict[str, tp.Any]) -> mne.io.RawArray:
-        raw = super()._load_raw(timeline)
-
-        # Re-load the raw EEG from the .mat with the correct layout to
-        # work around the MOABB BNCI2020_002 reshape bug.  See class
-        # docstring for details.
-        mat = loadmat(
-            str(self._mat_path(timeline)), struct_as_record=False, squeeze_me=True
-        )
-        bciexp = mat["bciexp"]
-        data = np.asarray(bciexp.data)  # (n_channels, n_samples, n_trials)
-        n_channels, n_samples, n_trials = data.shape
-        eeg_correct = (
-            data.transpose(0, 2, 1)
-            .reshape(n_channels, n_samples * n_trials)
-            .astype(raw._data.dtype)
-        )
-        # MOABB's `_convert_attention_shift` scales raw .mat data (uV) to
-        # V via ``* 1e-6``; mirror that scaling here so the patched
-        # channels keep MOABB's unit convention.
-        eeg_correct *= 1e-6
-
-        # Replace the EEG channels in MOABB's Raw.  MOABB lays out
-        # ``ch_names_full = list(bciexp.label) + ["HEOG", "VEOG", "STI"]``,
-        # so the first ``n_channels`` rows of ``raw._data`` are the EEG.
-        # HEOG/VEOG are flattened via ``arr.T.reshape(1, -1)`` which is
-        # already correct (transpose makes the F-contiguous (samples,
-        # trials) array C-contiguous before reshape), so we leave them
-        # untouched.  The STI channel is built sample-by-sample at
-        # ``trial_idx * n_samples`` -- consistent with trial-major
-        # layout, so it is also correct *after* this EEG fix.
-        raw._data[:n_channels] = eeg_correct  # noqa: SLF001
-        return raw
 
     def _load_timeline_events(self, timeline: dict[str, tp.Any]) -> pd.DataFrame:
         info = studies.SpecialLoader(method=self._load_raw, timeline=timeline).to_json()
