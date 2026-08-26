@@ -67,16 +67,16 @@ def test_emg2pose_study_source(tmp_path):
     assert events["valid_samples"].tolist() == [12_345]
 
 
-def test_bids_reader_restores_emg_and_joint_channel_semantics(monkeypatch, tmp_path):
-    """The BIDS reader keeps sidecar channel types and restores EMG scale."""
+def test_bids_reader_uses_bids_channel_metadata(monkeypatch, tmp_path):
+    """The BIDS reader preserves the BIDS channel types and SI values."""
     channel_names = [
-        *Emg2pose.EMG_CHANNEL_NAMES,
+        *[f"emg{index}" for index in range(16)],
         *[f"joint{index}" for index in range(20)],
     ]
     raw = mne.io.RawArray(
         np.concatenate(
             (
-                np.full((Emg2pose.EMG_CHANNEL_COUNT, 1), 5e-6),
+                np.full((16, 1), 5e-6),
                 np.full((20, 1), 0.5),
             )
         ),
@@ -84,7 +84,7 @@ def test_bids_reader_restores_emg_and_joint_channel_semantics(monkeypatch, tmp_p
             channel_names,
             sfreq=2000.0,
             ch_types=[
-                *["emg"] * Emg2pose.EMG_CHANNEL_COUNT,
+                *["emg"] * 16,
                 *["misc"] * 20,
             ],
         ),
@@ -105,7 +105,7 @@ def test_bids_reader_restores_emg_and_joint_channel_semantics(monkeypatch, tmp_p
     )._read()
 
     assert restored.get_channel_types(picks=["emg0", "joint0"]) == ["emg", "misc"]
-    assert restored.get_data(picks=["emg0", "joint0"]).ravel().tolist() == [5.0, 0.5]
+    assert restored.get_data(picks=["emg0", "joint0"]).ravel().tolist() == [5e-6, 0.5]
 
 
 @pytest.mark.parametrize("recordings", [1, 2, 3, 4])
