@@ -8,19 +8,21 @@ EMG2Pose BIDS study
 EMG2Pose is the NeurIPS 2024 hand-pose benchmark from Salter, Warren,
 Schlager et al. NEMAR NM000281 is its EMG-BIDS conversion. Each BDF recording
 contains ``emg0`` through ``emg15`` and ``joint0`` through ``joint19`` at
-2 kHz. The study maps those channel names explicitly because the converted
-recordings need not provide a ``channels.tsv`` sidecar. It restores the EMG
-from MNE's volts to the upstream normalized scale; joint channels are already
-in radians when read by MNE.
+2 kHz. Every recording supplies a BIDS ``channels.tsv`` sidecar: 16 ``EMG``
+channels in volts and 20 ``MISC`` joint-angle channels in radians. MNE-BIDS
+uses that metadata directly. The study restores EMG from MNE's volts to the
+upstream normalized scale; joint channels are already in radians when read by
+MNE.
 
 Why no default task configuration?
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The paper's train/validation/test and user/stage/user-stage generalization
-conditions come from the upstream ``metadata.csv``. BIDS entities and
-``events.tsv`` do not encode those splits. That file is currently outside the
-BIDS-only acquisition boundary, so a generic random split, plain MSE loss, or
-guessed target window would be misleading.
+The BIDS release exposes the source user, movement stage, hand side, source
+file, and valid sample count through ``participants.tsv`` and recording
+sidecars. The paper's exact train/validation/test and held-out
+user/stage/user-stage assignments remain defined by upstream ``metadata.csv``;
+they are not derivable exactly from those BIDS fields. A generic random split,
+plain MSE loss, or guessed target window would therefore be misleading.
 
 The future official task must therefore consume a public structured split
 artifact and implement the paper's valid-sample and ``BAD_IK`` handling,

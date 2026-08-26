@@ -14,32 +14,13 @@ from neuralfetch import download
 from neuralset.events import etypes, study
 
 
-class BidsEmg2pose(etypes.Emg):
-    """EMG2Pose recording read with channel metadata from BIDS sidecars."""
+class Emg2poseRecording(etypes.Emg):
+    """One EMG2Pose BIDS recording."""
 
     def _read(self) -> tp.Any:
         bids_path = mne_bids.get_bids_path_from_fname(self.filepath)
         raw = mne_bids.read_raw_bids(bids_path, verbose=False)
-        expected = [*Emg2pose.EMG_CHANNEL_NAMES, *Emg2pose.JOINT_CHANNEL_NAMES]
-        if raw.ch_names != expected:
-            raise ValueError(
-                "EMG2Pose BDF channels must be emg0..emg15 followed by joint0..joint19"
-            )
-        if raw.info["sfreq"] != Emg2pose.SAMPLE_RATE_HZ:
-            raise ValueError("EMG2Pose BDF sampling frequency must be 2000 Hz")
-        raw.set_channel_types(
-            {
-                **{name: "emg" for name in Emg2pose.EMG_CHANNEL_NAMES},
-                **{name: "misc" for name in Emg2pose.JOINT_CHANNEL_NAMES},
-            },
-            on_unit_change="ignore",
-        )
-        # MNE reads BDF ``uV`` signals in volts. The converted joint channels
-        # already therefore represent radians (their BDF encoding was rad×1e6),
-        # while the paper-normalized EMG must be restored to its native scale.
-        raw.load_data()
-        raw.apply_function(lambda values: values * 1e6, picks=Emg2pose.EMG_CHANNEL_NAMES)
-        return raw
+        return Emg2pose.restore_emg_scale(raw)
 
 
 class Emg2pose(study.Study):
@@ -51,13 +32,8 @@ class Emg2pose(study.Study):
 
     NEMAR_DATASET_ID: tp.ClassVar[str] = "nm000281"
     EMG_CHANNEL_COUNT: tp.ClassVar[int] = 16
-    POSE_CHANNEL_COUNT: tp.ClassVar[int] = 20
-    SAMPLE_RATE_HZ: tp.ClassVar[int] = 2000
     EMG_CHANNEL_NAMES: tp.ClassVar[tuple[str, ...]] = tuple(
         f"emg{index}" for index in range(EMG_CHANNEL_COUNT)
-    )
-    JOINT_CHANNEL_NAMES: tp.ClassVar[tuple[str, ...]] = tuple(
-        f"joint{index}" for index in range(POSE_CHANNEL_COUNT)
     )
     aliases: tp.ClassVar[tuple[str, ...]] = ("emg2pose", "nm000281")
     description: tp.ClassVar[str] = "16-channel EMG and hand-pose recordings."
@@ -68,6 +44,18 @@ class Emg2pose(study.Study):
         download.Eegdash(study=self.NEMAR_DATASET_ID, dset_dir=self.path).download(
             overwrite=overwrite
         )
+
+    @classmethod
+    def restore_emg_scale(cls, raw: tp.Any) -> tp.Any:
+        """Restore the paper's EMG convention after MNE reads BDF volts.
+
+        NM000281's ``channels.tsv`` files already provide ``EMG``/``MISC``
+        types and volt/radian units. Only the EMG numerical scale differs from
+        the upstream emg2pose arrays; joint-angle values are already radians.
+        """
+        raw.load_data()
+        raw.apply_function(lambda values: values * 1e6, picks=cls.EMG_CHANNEL_NAMES)
+        return raw
 
     @property
     def bids_root(self) -> Path:
@@ -153,7 +141,7 @@ class Emg2pose(study.Study):
         return pd.DataFrame(
             [
                 {
-                    "type": "BidsEmg2pose",
+                    "type": "Emg2poseRecording",
                     "filepath": str(matches[0].fpath),
                     "start": 0.0,
                     "subject": timeline["subject"],
