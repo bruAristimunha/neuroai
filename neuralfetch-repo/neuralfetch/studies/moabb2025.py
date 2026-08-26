@@ -3667,10 +3667,6 @@ class Stieger2021Continuous(_BaseMoabb):
         frequency=1000.0,
     )
 
-    @classmethod
-    def _get_dataset(cls) -> type[MoabbBaseDataset]:
-        return find_dataset_in_moabb(cls.aliases[0], {"fix_bads": False})
-
 
 class Tangermann2012Review(_BaseMoabb):
     """Subset of MOABB: BNCI2014_001"""
