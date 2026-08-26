@@ -2183,7 +2183,7 @@ class Lee2019EegErp(_BaseMoabb):
     )
     event_id: tp.ClassVar[dict[str, int]] = {"Target": 1, "NonTarget": 2}
     _info: tp.ClassVar[studies.StudyInfo] = studies.StudyInfo(
-        num_timelines=108,
+        num_timelines=216,
         num_subjects=54,
         num_events_in_query=1981,
         event_types_in_query={"Eeg", "Stimulus"},
@@ -2220,7 +2220,7 @@ class Lee2019EegMi(_BaseMoabb):
     )
     event_id: tp.ClassVar[dict[str, int]] = {"left_hand": 2, "right_hand": 1}
     _info: tp.ClassVar[studies.StudyInfo] = studies.StudyInfo(
-        num_timelines=54,
+        num_timelines=108,
         num_subjects=54,
         num_events_in_query=101,
         event_types_in_query={"Eeg", "Stimulus"},
@@ -2257,7 +2257,7 @@ class Lee2019EegSsvep(_BaseMoabb):
     )
     event_id: tp.ClassVar[dict[str, int]] = {"12.0": 1, "8.57": 2, "6.67": 3, "5.45": 4}
     _info: tp.ClassVar[studies.StudyInfo] = studies.StudyInfo(
-        num_timelines=54,
+        num_timelines=108,
         num_subjects=54,
         num_events_in_query=101,
         event_types_in_query={"Eeg", "Stimulus"},

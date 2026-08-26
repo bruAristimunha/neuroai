@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-- `neuralfetch`: raised the MOABB requirement to `>=1.6.0` and removed the three workarounds it makes redundant — the `BNCI2020_002` reshape override, the `MartinezCagigal2023` `stim_trial` monkeypatch, and the MAMEM Figshare listing cache (all fixed upstream in MOABB #1068). Note that MOABB 1.6.0 also converts `MartinezCagigal2023Checker`/`Pary` EEG from microvolts to volts, so signal amplitude for those two studies changes by 1e-6.
+- `neuralfetch`: raised the MOABB requirement to `>=1.6.0` and removed the three workarounds it makes redundant — the `BNCI2020_002` reshape override, the `MartinezCagigal2023` `stim_trial` monkeypatch, and the MAMEM Figshare listing cache (all fixed upstream in MOABB #1068). Note that MOABB 1.6.0 also converts `MartinezCagigal2023Checker`/`Pary` EEG from microvolts to volts, so signal amplitude for those two studies changes by 1e-6, and that `Lee2019_*` now exposes both sessions instead of one (`num_timelines` doubled for the three `Lee2019Eeg*` studies; delete any existing `timelines.csv` for them so it is rebuilt).
 - `neuralset`: `Study.version` is now a top-level field; `infra_timelines` → `timelines.infra` (Step syntax, defaults to `ProcessPool`). Requires exca ≥ 0.5.27. (#194)
 - `neuralset`: fixed `Mne2013Sample`/`Fake2025Meg` re-downloading MNE sample data on `run()` after `download()` (#157).
 - `neuralfetch`: added `Allen2022MassiveRaw` (BIDS/deepprep NSD variant) and gated NSD downloads behind `NSD_ACCEPT_LICENCE` (#105).
