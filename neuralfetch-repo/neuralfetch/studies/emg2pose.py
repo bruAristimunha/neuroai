@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
+import logging
 import typing as tp
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 import mne_bids
@@ -12,6 +15,22 @@ import pydantic
 
 from neuralfetch import download
 from neuralset.events import etypes, study
+
+logger = logging.getLogger(__name__)
+
+#: Columns of the upstream ``emg2pose_metadata.csv`` that are not recoverable
+#: from the BIDS entities and sidecars alone.
+_SPLIT_COLUMNS = (
+    "split",
+    "generalization",
+    "moving_hand",
+    "held_out_user",
+    "held_out_stage",
+)
+
+#: Public standalone copy of the metadata table, for users whose BIDS download
+#: skipped ``sourcedata/``.
+METADATA_URL = "https://fb-ctrl-oss.s3.amazonaws.com/emg2pose/emg2pose_metadata.csv"
 
 
 class Emg2poseRecording(etypes.Emg):
@@ -26,19 +45,66 @@ class Emg2pose(study.Study):
     """EMG2Pose hand-pose regression data published on NEMAR.
 
     BDF files and BIDS sidecars are the source of truth. No paper-specific
-    checkpoint, recording manifest, or split is embedded in this study.
+    checkpoint or recording manifest is embedded in this study.
+
+    The paper's ``split`` / ``generalization`` assignments are not encoded in
+    BIDS entities, but the release keeps each recording's upstream HDF5 name
+    (``SourceFile`` in the sidecar), which is the key of the published
+    ``emg2pose_metadata.csv``. When that table is available the split columns
+    are joined onto every recording; when it is not, they are simply absent
+    and the study stays usable BIDS-only.
+
+    Parameters
+    ----------
+    split_metadata : Path, optional
+        Explicit path to ``emg2pose_metadata.csv``. Defaults to the copy
+        shipped inside the release at ``sourcedata/emg2pose_metadata.csv``;
+        a standalone copy (~5 MiB) is published at :data:`METADATA_URL`.
     """
 
     NEMAR_DATASET_ID: tp.ClassVar[str] = "nm000281"
     aliases: tp.ClassVar[tuple[str, ...]] = ("emg2pose", "nm000281")
     description: tp.ClassVar[str] = "16-channel EMG and hand-pose recordings."
+    split_metadata: Path | None = None
     _bids_root_cache: Path | None = pydantic.PrivateAttr(default=None)
     _participant_users_cache: dict[str, str] | None = pydantic.PrivateAttr(default=None)
+    _split_metadata_cache: dict[str, dict[str, tp.Any]] | None = pydantic.PrivateAttr(
+        default=None
+    )
+    _scans_cache: dict[Path, dict[str, float]] = pydantic.PrivateAttr(
+        default_factory=dict
+    )
 
     def _download(self, overwrite: bool = False) -> None:
         download.Eegdash(study=self.NEMAR_DATASET_ID, dset_dir=self.path).download(
             overwrite=overwrite
         )
+        self._download_split_metadata(overwrite=overwrite)
+
+    def _download_split_metadata(self, overwrite: bool = False) -> None:
+        """Fetch the standalone metadata table unless the release shipped one.
+
+        Best-effort: a failure here leaves the study fully usable, just without
+        the paper's split columns.
+        """
+        if self._existing_metadata_path() is not None and not overwrite:
+            return
+        target = self.path / "emg2pose_metadata.csv"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            urllib.request.urlretrieve(METADATA_URL, target)  # noqa: S310
+        except (urllib.error.URLError, OSError) as exc:
+            logger.warning("Could not fetch %s: %s", METADATA_URL, exc)
+
+    def _existing_metadata_path(self) -> Path | None:
+        """First metadata table found among the supported locations."""
+        candidates = []
+        if self.split_metadata is not None:
+            candidates.append(Path(self.split_metadata))
+        else:
+            candidates.append(self.bids_root / "sourcedata" / "emg2pose_metadata.csv")
+            candidates.append(self.path / "emg2pose_metadata.csv")
+        return next((c for c in candidates if c.is_file()), None)
 
     @property
     def bids_root(self) -> Path:
@@ -79,6 +145,68 @@ class Emg2pose(study.Study):
         }
         return self._participant_users_cache
 
+    @property
+    def recording_splits(self) -> dict[str, dict[str, tp.Any]]:
+        """Map upstream HDF5 stems to the paper's split assignment.
+
+        Returns an empty mapping (and warns once) when the metadata table is
+        not present, so BIDS-only downloads keep working.
+        """
+        if self._split_metadata_cache is not None:
+            return self._split_metadata_cache
+        path = self._existing_metadata_path()
+        if path is None:
+            logger.warning(
+                "No emg2pose metadata table found under %s; the paper's split and "
+                "generalization columns will be absent. Fetch it from %s or pass "
+                "split_metadata=.",
+                self.path,
+                METADATA_URL,
+            )
+            self._split_metadata_cache = {}
+            return self._split_metadata_cache
+        table = pd.read_csv(path)
+        missing = {"filename", *_SPLIT_COLUMNS}.difference(table.columns)
+        if missing:
+            raise ValueError(
+                f"{path} is missing expected column(s): {sorted(missing)}. "
+                f"Expected the upstream emg2pose metadata table ({METADATA_URL})."
+            )
+        self._split_metadata_cache = {
+            str(row["filename"]): {col: row[col] for col in _SPLIT_COLUMNS}
+            for _, row in table.iterrows()
+        }
+        return self._split_metadata_cache
+
+    def _splits_for(self, source_file: tp.Any) -> dict[str, tp.Any]:
+        """Look up the split row for a recording's upstream HDF5 name."""
+        splits = self.recording_splits
+        if not splits or source_file is None or pd.isna(source_file):
+            return {}
+        # ``metadata.csv`` keys on the stem; the sidecar keeps the ``.hdf5``.
+        return splits.get(Path(str(source_file)).stem, {})
+
+    def _scan_durations(self, session_dir: Path) -> dict[str, float]:
+        """Un-padded recording durations from a session's ``scans.tsv``.
+
+        ``ValidSamples`` is absent from a minority of sidecars (2,785 of
+        25,253 in NM000281), but ``scans.tsv`` covers every recording and
+        agrees exactly with ``ValidSamples / SamplingFrequency`` wherever both
+        are present, so it is the fallback for bounding an event.
+        """
+        if session_dir in self._scans_cache:
+            return self._scans_cache[session_dir]
+        durations: dict[str, float] = {}
+        for path in session_dir.glob("*_scans.tsv"):
+            table = pd.read_csv(path, sep="\t")
+            if not {"filename", "duration"}.issubset(table.columns):
+                continue
+            for name, duration in zip(table["filename"], table["duration"]):
+                if pd.notna(duration):
+                    durations[Path(str(name)).name] = float(duration)
+        self._scans_cache[session_dir] = durations
+        return durations
+
     def iter_timelines(self) -> tp.Iterator[dict[str, tp.Any]]:
         """Yield recordings from BIDS entities, never parsed file names."""
         for bids_path in mne_bids.find_matching_paths(
@@ -91,6 +219,7 @@ class Emg2pose(study.Study):
             subject = bids_path.subject
             user = self.participant_users.get(subject, subject)
             stage = sidecar.get("Stage")
+            source_file = sidecar.get("SourceFile")
             timeline = {
                 "subject": bids_path.subject,
                 "session": bids_path.session,
@@ -100,10 +229,15 @@ class Emg2pose(study.Study):
                 "user": user,
                 "stage": stage,
                 "side": sidecar.get("HandSide", bids_path.recording),
-                "source_file": sidecar.get("SourceFile"),
+                "source_file": source_file,
                 "valid_samples": sidecar.get("ValidSamples"),
+                "sampling_frequency": sidecar.get("SamplingFrequency"),
+                "scan_duration": self._scan_durations(bids_path.fpath.parent.parent).get(
+                    bids_path.fpath.name
+                ),
             }
             timeline["user_stage"] = f"{user}/{stage}" if stage else user
+            timeline.update(self._splits_for(source_file))
             yield timeline
 
     def _load_timeline_events(self, timeline: dict[str, tp.Any]) -> pd.DataFrame:
@@ -121,19 +255,49 @@ class Emg2pose(study.Study):
             raise ValueError(
                 f"Expected one BDF for BIDS timeline {timeline}, got {len(matches)}"
             )
-        return pd.DataFrame(
-            [
-                {
-                    "type": "Emg2poseRecording",
-                    "filepath": str(matches[0].fpath),
-                    "start": 0.0,
-                    "subject": timeline["subject"],
-                    "user": timeline["user"],
-                    "stage": timeline["stage"],
-                    "side": timeline["side"],
-                    "source_file": timeline["source_file"],
-                    "valid_samples": timeline["valid_samples"],
-                    "user_stage": timeline["user_stage"],
-                }
-            ]
-        )
+        event = {
+            "type": "Emg2poseRecording",
+            "filepath": str(matches[0].fpath),
+            "start": 0.0,
+            "subject": timeline["subject"],
+            "user": timeline["user"],
+            "stage": timeline["stage"],
+            "side": timeline["side"],
+            "source_file": timeline["source_file"],
+            "valid_samples": timeline["valid_samples"],
+            "user_stage": timeline["user_stage"],
+        }
+        duration = self._valid_duration(timeline)
+        if duration is not None:
+            event["duration"] = duration
+        for column in _SPLIT_COLUMNS:
+            if column in timeline:
+                event[column] = timeline[column]
+        return pd.DataFrame([event])
+
+    @staticmethod
+    def _valid_duration(timeline: dict[str, tp.Any]) -> float | None:
+        """Duration of the un-padded region of a recording, in seconds.
+
+        Every BDF in the release is zero-padded up to a whole number of
+        one-second records, so the file is longer than the data. The sidecar
+        records how much of it is real (``ValidSamples``); bounding the event
+        there keeps sliding windows off the padded tail. Where that field is
+        missing, the session's ``scans.tsv`` duration says the same thing.
+        Returns ``None`` when neither is available, leaving the duration to be
+        auto-filled from the file as before.
+        """
+        samples = timeline.get("valid_samples")
+        frequency = timeline.get("sampling_frequency")
+        if (
+            samples is not None
+            and frequency is not None
+            and not pd.isna(samples)
+            and not pd.isna(frequency)
+            and float(frequency) > 0
+        ):
+            return float(samples) / float(frequency)
+        scanned = timeline.get("scan_duration")
+        if scanned is None or pd.isna(scanned) or float(scanned) <= 0:
+            return None
+        return float(scanned)

@@ -11,6 +11,23 @@ import pytest
 from neuralfetch.studies.emg2pose import Emg2pose, Emg2poseRecording
 
 
+def _make_split_metadata(bids_root, recordings=1, splits=("train", "test")):
+    """Write an upstream-shaped metadata table keyed on the HDF5 stem."""
+    path = bids_root / "sourcedata" / "emg2pose_metadata.csv"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    header = (
+        "session,user,stage,start,end,side,filename,moving_hand,"
+        "held_out_user,held_out_stage,split,generalization\n"
+    )
+    rows = "".join(
+        f"ses-01,user-123,unconstrained,0.0,1.0,left,recording-{run:02d},both,"
+        f"True,False,{splits[(run - 1) % len(splits)]},user\n"
+        for run in range(1, recordings + 1)
+    )
+    path.write_text(header + rows)
+    return path
+
+
 def _make_bids_tree(root, recordings=1):
     """Build a small BIDS EMG2Pose tree in the Eegdash cache layout."""
     bids_root = root / "download" / Emg2pose.NEMAR_DATASET_ID
@@ -18,6 +35,7 @@ def _make_bids_tree(root, recordings=1):
     (bids_root / "participants.tsv").write_text(
         "participant_id\toriginal_user\nsub-01\tuser-123\n"
     )
+    scans = ["filename\tacq_time\tduration\tstage\tside\tsource_file"]
     for run in range(1, recordings + 1):
         emg_dir = bids_root / "sub-01" / "ses-01" / "emg"
         emg_dir.mkdir(parents=True, exist_ok=True)
@@ -30,9 +48,15 @@ def _make_bids_tree(root, recordings=1):
                     "HandSide": "left",
                     "SourceFile": f"recording-{run:02d}.hdf5",
                     "ValidSamples": 12_345,
+                    "SamplingFrequency": 2000.0,
                 }
             )
         )
+        scans.append(
+            f"emg/{stem}.bdf\tn/a\t6.1725\tunconstrained\tleft\trecording-{run:02d}.hdf5"
+        )
+    session_dir = bids_root / "sub-01" / "ses-01"
+    (session_dir / "sub-01_ses-01_scans.tsv").write_text("\n".join(scans) + "\n")
     return bids_root
 
 
@@ -55,6 +79,8 @@ def test_emg2pose_study_source(tmp_path):
             "side": "left",
             "source_file": "recording-01.hdf5",
             "valid_samples": 12_345,
+            "sampling_frequency": 2000.0,
+            "scan_duration": 6.1725,
             "user_stage": "user-123/unconstrained",
         }
     ]
@@ -115,3 +141,82 @@ def test_emg2pose_discovers_each_bids_run(tmp_path, recordings):
     _make_bids_tree(study.path, recordings=recordings)
 
     assert len(list(study.iter_timelines())) == recordings
+
+
+def test_event_duration_stops_at_valid_samples(tmp_path):
+    """Windows are bounded by the un-padded region, not the padded BDF."""
+    study = Emg2pose(path=tmp_path)
+    _make_bids_tree(study.path)
+
+    timeline = next(iter(study.iter_timelines()))
+    events = study._load_timeline_events(timeline)
+
+    # 12_345 samples at 2 kHz, not the whole-second padded file length.
+    assert events["duration"].tolist() == [12_345 / 2000.0]
+
+
+def test_event_duration_falls_back_to_scans_tsv(tmp_path):
+    """ValidSamples is absent from some sidecars; scans.tsv covers them."""
+    study = Emg2pose(path=tmp_path)
+    _make_bids_tree(study.path)
+
+    timeline = next(iter(study.iter_timelines()))
+    timeline["valid_samples"] = None
+    events = study._load_timeline_events(timeline)
+
+    # 6.1725 s == 12_345 / 2000: scans.tsv states the same un-padded span.
+    assert events["duration"].tolist() == [6.1725]
+
+
+def test_event_duration_absent_without_any_source(tmp_path):
+    """With neither ValidSamples nor scans.tsv, duration is left to auto-fill."""
+    study = Emg2pose(path=tmp_path)
+    _make_bids_tree(study.path)
+
+    timeline = next(iter(study.iter_timelines()))
+    timeline["valid_samples"] = None
+    timeline["scan_duration"] = None
+    events = study._load_timeline_events(timeline)
+
+    assert "duration" not in events.columns
+
+
+def test_paper_splits_joined_from_metadata(tmp_path):
+    """metadata.csv joins onto recordings through the sidecar's SourceFile."""
+    study = Emg2pose(path=tmp_path)
+    bids_root = _make_bids_tree(study.path, recordings=2)
+    _make_split_metadata(bids_root, recordings=2)
+
+    timelines = list(study.iter_timelines())
+    assert [t["split"] for t in timelines] == ["train", "test"]
+    assert {t["generalization"] for t in timelines} == {"user"}
+
+    events = study._load_timeline_events(timelines[0])
+    assert events["split"].tolist() == ["train"]
+    assert events["held_out_user"].tolist() == [True]
+
+
+def test_split_columns_absent_without_metadata(tmp_path):
+    """A BIDS-only download stays usable, just without the paper's splits."""
+    study = Emg2pose(path=tmp_path)
+    _make_bids_tree(study.path)
+
+    timeline = next(iter(study.iter_timelines()))
+    assert "split" not in timeline
+    assert "generalization" not in timeline
+    assert study.recording_splits == {}
+
+    events = study._load_timeline_events(timeline)
+    assert "split" not in events.columns
+
+
+def test_malformed_metadata_table_is_rejected(tmp_path):
+    """A CSV without the expected columns fails loudly rather than silently."""
+    study = Emg2pose(path=tmp_path)
+    bids_root = _make_bids_tree(study.path)
+    path = bids_root / "sourcedata" / "emg2pose_metadata.csv"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("filename,split\nrecording-01,train\n")
+
+    with pytest.raises(ValueError, match="missing expected column"):
+        _ = study.recording_splits

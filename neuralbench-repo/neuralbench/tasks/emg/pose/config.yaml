@@ -15,17 +15,17 @@ data:
     source:
       name: Emg2pose
     split:
-      # Held-out-user generalization: no user contributes recordings to more
-      # than one fold.  ``user`` (not ``subject``) is the paper's identity
-      # column -- the BIDS conversion assigns one subject label per user, but
-      # the study carries the original label so the split stays paper-aligned
-      # if that ever changes.
-      name: SklearnSplit
-      split_by: user
-      valid_split_ratio: 0.2
-      test_split_ratio: 0.2
-      valid_random_state: 33
-      test_random_state: 33
+      # The paper's own train/val/test assignment, joined onto each recording
+      # from the upstream ``emg2pose_metadata.csv`` via the HDF5 name the BIDS
+      # sidecars preserve as ``SourceFile``.  ``valid_split_by: null`` keeps
+      # the published ``val`` rows instead of re-drawing a validation set out
+      # of train.  Test rows carry ``generalization`` in {user, stage,
+      # user_stage}, so per-condition numbers come out of the aggregation.
+      name: PredefinedSplit
+      event_type: Emg2poseRecording
+      test_split_query: null
+      col_name: split
+      valid_split_by: null
   # No filter / notch / baseline / scaler / clamp: the paper feeds raw 2 kHz
   # EMG straight to the model, same convention as ``emg/typing``.
   neuro:
@@ -71,13 +71,15 @@ data:
       scaler: null
       clamp: null
   # 5-s windows, non-overlapping (stride = duration), matching the paper's
-  # window length.
+  # window length.  Each recording's event duration is bounded by the sidecar's
+  # ``ValidSamples``, so windows never run into the zero padding that brings
+  # every BDF up to a whole number of one-second records.
   trigger_event_type: Emg2poseRecording
   start: 0.0
   duration: 5.0
   stride: 5.0
   stride_drop_incomplete: true
-  summary_columns: [user, stage, side]
+  summary_columns: [user, stage, side, generalization]
 brain_model_output_size: &brain_model_output_size 20
 trainer_config:
   monitor: val/mae

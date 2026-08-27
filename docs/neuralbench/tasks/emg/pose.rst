@@ -5,7 +5,7 @@ Hand pose decoding
 | **Category**: motor / hand-pose decoding
 | **Dataset**: :py:class:`~neuralset.studies.Emg2pose` (NM000281, emg2pose)
 | **Objective**: :bdg-dark:`20-joint angle regression`
-| **Split**: Leave-users-out (cross-user)
+| **Split**: The paper's ``train`` / ``val`` / ``test`` assignment
 | **Upstream**: `paper <https://arxiv.org/abs/2412.02725>`_, `code <https://github.com/facebookresearch/emg2pose>`_, `blog <https://ai.meta.com/blog/open-sourcing-surface-electromyography-datasets-neurips-2024/>`_
 
 .. image:: https://fb-ctrl-oss.s3.amazonaws.com/emg2pose/emg2pose_overview.png
@@ -52,11 +52,11 @@ Pearson *r*, R², and normalized RMSE over the 20 outputs.
 
 As compared to the original paper, the NeuralBench default configuration
 predicts a single end-of-window pose rather than rolling a state-space
-tracker across the whole session, and splits users at random rather than
-reusing the paper's fixed held-out-user assignment, keeping turn-around
-tractable.  The paper's ``BAD_IK`` masking and per-user aggregation are not
-applied, so absolute errors are not directly comparable to the published
-tracking numbers.
+tracker across the whole session, keeping turn-around tractable.  The paper's
+``BAD_IK`` masking and per-user aggregation are not applied, so absolute
+errors are not directly comparable to the published tracking numbers.  The
+train / validation / test assignment, however, is the paper's own (see
+`Paper splits`_).
 
 The upstream repository ships three reference experiments --
 ``tracking_vemg2pose``, ``regression_vemg2pose``, and
@@ -97,19 +97,25 @@ Dataset Notes
   time.
 * **Windowing**: 5-s windows with a 5-s stride, so windows tile each
   recording without overlap; incomplete trailing windows are dropped.
-  Note that each BDF is zero-padded to a whole second (verified:
-  ``ValidSamples + BDFPaddedSamples`` is always a multiple of 2000), so the
-  final retained window of a recording can end on up to ~1 s of padding.
-  The task does not yet crop to ``ValidSamples``; doing so is a small,
-  worthwhile follow-up.
+* **Zero padding**: every BDF is zero-padded up to a whole number of
+  one-second records, so the file runs past the data (``ValidSamples +
+  BDFPaddedSamples`` is always a multiple of 2000).  The study bounds each
+  recording's event at ``ValidSamples / SamplingFrequency``, so windows never
+  reach the padded tail -- without it the last window of a recording could
+  end on up to 0.999 s of zeros.  ``ValidSamples`` is missing from 2,785 of
+  the 25,253 sidecars; for those, the session's ``scans.tsv`` ``duration``
+  column is used instead.  It agrees exactly with
+  ``ValidSamples / SamplingFrequency`` on all 22,468 recordings that carry
+  both, and together the two cover the release with no gaps.
 
 Paper splits
 ~~~~~~~~~~~~
 
 The upstream ``metadata.csv`` -- one row per HDF5 recording -- carries the
 fields below.  Only ``user``, ``stage``, ``side``, and the source file name
-survive into the BIDS conversion; the split and generalization assignments do
-not.
+survive into the BIDS entities and sidecars; the split and generalization
+assignments do not.  The study recovers them by joining ``metadata.csv`` on
+that source file name, which every recording preserves as ``SourceFile``.
 
 .. list-table::
    :header-rows: 1
@@ -117,7 +123,7 @@ not.
 
    * - Column
      - Description
-     - In NM000281?
+     - In BIDS entities?
    * - ``user``
      - Anonymized user ID
      - yes (``participants.tsv``)
@@ -146,15 +152,28 @@ not.
      - ``user``, ``stage``, or ``user_stage``
      - no
 
+``metadata.csv`` ships inside the release at
+``sourcedata/emg2pose_metadata.csv`` and is also published standalone (~5 MiB)
+at ``https://fb-ctrl-oss.s3.amazonaws.com/emg2pose/emg2pose_metadata.csv``;
+``--download`` fetches the standalone copy when the release's own is absent,
+and ``Emg2pose(split_metadata=...)`` overrides both.  The join was checked
+against the full release: **all 25,253 recordings match a metadata row**, and
+the resulting counts reproduce the published totals exactly --
+17,136 ``train`` / 1,950 ``val`` / 6,167 ``test``, with the test rows
+splitting 3,790 ``user`` / 3,539 ``stage`` / 788 ``user_stage``.
+
+``PredefinedSplit`` consumes the ``split`` column directly with
+``valid_split_by: null``, so the paper's validation recordings are kept rather
+than a fresh validation set being drawn out of train.  ``generalization`` is
+carried in ``summary_columns``, so per-condition numbers fall out of the
+aggregation.
+
 .. note::
 
-   ``metadata.csv`` is published standalone (~5 MiB) at
-   ``https://fb-ctrl-oss.s3.amazonaws.com/emg2pose/emg2pose_metadata.csv``
-   and is keyed by the HDF5 file name, which NM000281 preserves as
-   ``source_file`` in ``scans.tsv`` and ``SourceFile`` in each sidecar.
-   Joining on that column is therefore enough to recover the paper's exact
-   splits and the three generalization conditions -- the intended follow-up
-   to the random cross-user split shipped here.
+   When no metadata table can be found, the study logs a warning and simply
+   omits the split columns -- a BIDS-only download stays usable for
+   exploration, but ``neuralbench emg pose`` will fail at split time, because
+   there is no defensible split to fall back on.
 
 .. warning::
 
