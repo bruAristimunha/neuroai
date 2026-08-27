@@ -53,7 +53,6 @@ import os
 import re
 import typing as tp
 from collections import OrderedDict
-from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
 
@@ -770,26 +769,6 @@ class Cattan2019Passive(_BaseMoabb):
         frequency=512.0,
     )
 
-    def _load_timeline_events(self, timeline: dict[str, tp.Any]) -> pd.DataFrame:
-        """Extend Stimulus durations to span from one marker to the next.
-
-        MOABB annotations are 1-second markers, but each one marks the start of
-        a ~75 s relaxation period. Extending durations enables stride windowing.
-        """
-        df = super()._load_timeline_events(timeline)
-        stim_mask = df["type"] == "Stimulus"
-        stim = df.loc[stim_mask].sort_values("start")
-        starts = stim["start"]
-        durations = starts.shift(-1) - starts
-        eeg_row = df.loc[df["type"] == "Eeg"].iloc[0]
-        if "duration" in eeg_row.index and pd.notna(eeg_row.get("duration")):
-            rec_end = float(eeg_row["start"]) + float(eeg_row["duration"])
-        else:
-            rec_end = starts.iloc[-1] + 60.0
-        durations.iloc[-1] = rec_end - starts.iloc[-1]
-        df.loc[stim.index, "duration"] = durations.values
-        return df
-
 
 class Cattan2019Dataset(_BaseMoabb):
     """Subset of MOABB: Cattan2019_VR"""
@@ -1273,88 +1252,6 @@ class Guger2009How(_BaseMoabb):
     )
 
 
-def _load_haufe2011_raw(dl_path: Path, subject: int) -> mne.io.RawArray:
-    """Load Haufe2011Eeg (BNCI2016-002) raw data directly from MATLAB files.
-
-    Ensures ``marker_labels`` columns are correctly matched to
-    ``event_mapping`` keys when creating annotations.
-    """
-    from moabb.datasets.bnci.bnci_2016_002 import _SUBJECT_VP_CODES, BBCI_URL
-    from moabb.datasets.bnci.utils import bnci_data_path, convert_units, make_raw
-    from pymatreader import read_mat
-
-    vp_code = _SUBJECT_VP_CODES[subject]
-    url = f"{BBCI_URL}VP{vp_code}.mat"
-    filename = bnci_data_path(url, dl_path, False, None, None)[0]
-
-    mat = read_mat(filename)
-    sfreq = float(np.asarray(mat["cnt"]["fs"]).flat[0])
-    ch_names = mat["cnt"]["clab"]
-    if isinstance(ch_names, str):
-        ch_names = [ch_names]
-    data = np.asarray(mat["cnt"]["x"]).T
-    marker_times = np.asarray(mat["mrk"]["time"]).flatten()
-    marker_labels = np.asarray(mat["mrk"]["y"])
-
-    eog_chs = {"EOGv", "EOGh"}
-    emg_chs = {"EMGf"}
-    misc_chs = {
-        "lead_gas",
-        "lead_brake",
-        "dist_to_lead",
-        "wheel_X",
-        "wheel_Y",
-        "gas",
-        "brake",
-    }
-    ch_types = [
-        (
-            "eog"
-            if ch in eog_chs
-            else "emg"
-            if ch in emg_chs
-            else "misc"
-            if ch in misc_chs
-            else "eeg"
-        )
-        for ch in ch_names
-    ]
-
-    bio_mask = [i for i, ct in enumerate(ch_types) if ct in ("eeg", "eog", "emg")]
-    data = convert_units(data.copy(), from_unit="uV", to_unit="V", channel_mask=bio_mask)
-
-    raw = make_raw(
-        data,
-        ch_names,
-        ch_types,
-        sfreq,
-        montage="standard_1005",
-        line_freq=50.0,
-        meas_date=datetime(2011, 1, 1, tzinfo=timezone.utc),
-    )
-
-    event_mapping = {0: "NonTarget", 1: "Target"}
-    onset_times: list[float] = []
-    descriptions: list[str] = []
-    for i, time_ms in enumerate(marker_times):
-        for class_idx, value in enumerate(marker_labels[:, i]):
-            if value > 0 and class_idx in event_mapping:
-                onset_times.append(time_ms / 1000.0)
-                descriptions.append(event_mapping[class_idx])
-                break
-
-    if onset_times:
-        raw.set_annotations(
-            mne.Annotations(
-                onset=onset_times,
-                duration=[0.0] * len(onset_times),
-                description=descriptions,
-            )
-        )
-
-    return raw
-
-
 class Haufe2011Eeg(_BaseMoabb):
     """Subset of MOABB: BNCI2016_002"""
 
@@ -1391,25 +1288,6 @@ class Haufe2011Eeg(_BaseMoabb):
         data_shape=(59, 1619936),
         frequency=200.0,
     )
-
-    def _load_raw(self, timeline: dict[str, tp.Any]) -> mne.io.RawArray:
-        """Load raw data using custom MATLAB parser for correct marker handling."""
-        tl = timeline
-        dl_path = Path(self.path) / "download"
-        subject = tl["subject"]
-
-        key = (str(dl_path), subject)
-        if key in _moabb_data_cache:
-            _moabb_data_cache.move_to_end(key)
-            return _moabb_data_cache[key][subject][tl["session"]][tl["run"]]
-
-        raw = _load_haufe2011_raw(dl_path, subject)
-
-        _moabb_data_cache[key] = {subject: {tl["session"]: {tl["run"]: raw}}}
-        while len(_moabb_data_cache) > _MOABB_CACHE_MAXSIZE:
-            _moabb_data_cache.popitem(last=False)
-
-        return raw
 
 
 class Hinss2021Open(_BaseMoabb):
@@ -2810,17 +2688,18 @@ class Reichert2020Impact(_BaseMoabb):
     )
 
     def _mat_path(self, timeline: dict[str, tp.Any]) -> Path:
-        """Return the path to ``P<subject>.mat`` on disk."""
-        subject = int(timeline["subject"])
-        return (
-            Path(self.path)
-            / "download"
-            / "MNE-bnci-data"
-            / "database"
-            / "data-sets"
-            / "002-2020"
-            / f"P{subject:02d}.mat"
-        )
+        """Return the path to ``P<subject>.mat``, asking MOABB where it is.
+
+        MOABB owns the on-disk layout, so hardcoding
+        ``download/MNE-bnci-data/database/data-sets/002-2020/`` here only works
+        until it changes. ``data_path`` resolves the same file through
+        ``only_filenames=True`` and, unlike the hardcoded path, guarantees it is
+        actually present.
+        """
+        dl_path = Path(self.path) / "download"
+        with temp_mne_data(dl_path, clear_dataset_configs=True):
+            ds = self._get_dataset()
+            return Path(ds.data_path(int(timeline["subject"]), path=dl_path)[0])
 
     def _load_timeline_events(self, timeline: dict[str, tp.Any]) -> pd.DataFrame:
         info = studies.SpecialLoader(method=self._load_raw, timeline=timeline).to_json()

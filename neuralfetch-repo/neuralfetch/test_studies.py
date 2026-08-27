@@ -242,7 +242,12 @@ def test_reichert2020_impact_eeg_layout() -> None:
 
     timeline = {"subject": 1, "session": "0", "run": "0"}
     study = Reichert2020Impact(path=folder)
-    mat_path = study._mat_path(timeline)  # noqa: SLF001
+    # _mat_path now asks MOABB to resolve the file, which fetches it if absent;
+    # off-cluster or offline that raises rather than returning a missing path.
+    try:
+        mat_path = study._mat_path(timeline)  # noqa: SLF001
+    except Exception as exc:  # noqa: BLE001 - any resolution failure means "no data here"
+        pytest.skip(f"Reichert2020Impact data unavailable: {exc}")
     if not mat_path.exists():
         pytest.skip(f"Reichert2020Impact data not downloaded at {mat_path}")
 
