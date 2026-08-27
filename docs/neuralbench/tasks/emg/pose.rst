@@ -56,7 +56,9 @@ This is the paper's **regression** setting.  Upstream
 conditioning and no initial pose (``regression_neuropose.yaml`` sets
 ``provide_initial_pos: False``, ``predict_vel: False``) -- so a plain
 sequence-to-sequence backbone is the right shape.  The default is
-``NeuroPoseNet``, the paper's NeuroPose baseline.
+NeuroPose [Liu2021]_, the model the paper runs as its
+``regression_neuropose`` baseline -- ``NeuroPoseNet`` is braindecode's class
+name for it.
 
 The paper's **tracking** setting is not implemented: it feeds the initial
 pose in and conditions on the previous state at each step
@@ -100,6 +102,15 @@ Dataset Notes
   The task splits on ``user``, and ``stage`` / ``side`` ride along in
   ``summary_columns`` for per-stage and per-hand breakdowns at aggregation
   time.
+* **Sampling rate**: ``NeuroPoseNet`` decimates 2 kHz to
+  ``internal_sfreq`` (200 Hz, the original MyoBand rate) by average pooling
+  and then applies NeuroPose's original pooling schedule.  emg2pose instead
+  keeps 2 kHz and widens the featurizer and decoder sampling by 8x temporally
+  and 2x spatially so the receptive field stays comparable (Section 3.5).
+  The receptive fields do end up close -- 0.2 s here against 0.16 s upstream
+  -- but this route discards EMG content above 100 Hz, which the hardware
+  records out to 850 Hz.  Revisit before reading results against the
+  published NeuroPose row.
 * **IK failures**: the offline inverse-kinematics solver failed on 12.7% of
   frames, and the release marks those frames by writing an **all-zero joint
   vector** -- there is no separate annotation.  Upstream detects them with
@@ -206,6 +217,10 @@ aggregation.
 
 References
 ~~~~~~~~~~
+
+.. [Liu2021] Liu, Yilin, Sai Zhang, and Mahanth Gowda. "NeuroPose: 3D hand
+   pose tracking using EMG wearables." *Proceedings of the Web Conference
+   2021*, 1471--1482.
 
 .. [Salter2024] Salter, Sasha, Richard Warren, Collin Schlager, Adrian Spurr,
    Shangchen Han, Rohin Bhasin, Yujun Cai, Peter Walkington, Anuoluwapo
