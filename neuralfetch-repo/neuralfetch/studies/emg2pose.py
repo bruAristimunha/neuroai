@@ -11,11 +11,11 @@ from pathlib import Path
 
 import mne
 import mne_bids
-import numpy as np
 import pandas as pd
 import pydantic
 
 from neuralfetch import download
+
 # Imported for its side effect: registers the ``BidsEmg`` event type this
 # study emits. Same reader, same BIDS conventions as emg2qwerty.
 from neuralfetch.studies.sivakumar2024emg2qwerty import BidsEmg  # noqa: F401
@@ -36,31 +36,6 @@ _SPLIT_COLUMNS = (
 #: Public standalone copy of the metadata table, for users whose BIDS download
 #: skipped ``sourcedata/``.
 METADATA_URL = "https://fb-ctrl-oss.s3.amazonaws.com/emg2pose/emg2pose_metadata.csv"
-
-
-def ik_failure_mask(joint_angles: np.ndarray) -> np.ndarray:
-    """``True`` where the inverse-kinematics solver failed.
-
-    Reproduces ``emg2pose.utils.get_ik_failures_mask``: the upstream release
-    writes an all-zero joint vector wherever the offline IK solver could not
-    resolve a frame, which the paper reports for 12.7% of frames. There is no
-    separate annotation -- the zeros *are* the marker.
-
-    Parameters
-    ----------
-    joint_angles : np.ndarray
-        Joint angles shaped ``(joint, time)``.
-    """
-    return np.all(np.isclose(joint_angles, 0.0), axis=0)
-
-
-def contiguous_spans(mask: np.ndarray) -> list[tuple[int, int]]:
-    """Half-open ``(start, stop)`` index spans where *mask* is ``True``."""
-    if mask.ndim != 1:
-        raise ValueError(f"mask must be 1-D, got shape {mask.shape}")
-    padded = np.concatenate(([False], mask.astype(bool), [False]))
-    edges = np.flatnonzero(padded[1:] != padded[:-1])
-    return list(zip(edges[::2].tolist(), edges[1::2].tolist()))
 
 
 def _clip(spans: list[tuple[float, float]], limit: float) -> list[tuple[float, float]]:
@@ -305,68 +280,43 @@ class Salter2024Emg2pose(study.Study):
             timeline.update(self._splits_for(source_file))
             yield timeline
 
-    JOINT_CHANNEL_PREFIX: tp.ClassVar[str] = "joint"
     #: NM000281 marks IK failures with this BDF annotation.
     IK_ANNOTATION: tp.ClassVar[str] = "BAD_IK"
-    #: The BDF physical header declares ``uV`` for every channel, so MNE
-    #: returns joint angles 1e6 times too small. IK failures are detected in
-    #: radians, as upstream does, so a genuinely small angle is not mistaken
-    #: for the all-zero failure marker.
-    JOINT_SCALE: tp.ClassVar[float] = 1e6
 
     def _ik_clean_spans(
         self, filepath: str, valid_duration: float | None
     ) -> list[tuple[float, float]]:
         """``(start, duration)`` seconds for each span with resolved IK.
 
-        NM000281 records IK failures as ``BAD_IK`` BDF annotations -- its
-        README: "BAD_IK annotations mark samples where inverse-kinematics
-        labels are all zero". Those annotations are the authoritative marker
-        and are cheap to read, so they are preferred over recomputing the
-        all-zero test on quantized joint samples. The recomputation stays as a
-        fallback for a tree without annotations.
+        NM000281 records IK failures as ``BAD_IK`` annotations -- its README:
+        "BAD_IK annotations mark samples where inverse-kinematics labels are
+        all zero". The annotations are the only usable source here: measured
+        over 60 recordings, upstream's all-zero test on the BDF joint samples
+        agrees with them only 87% of the time on average (as low as 32%), and
+        typically reports no failures at all where the annotations mark 15% of
+        the recording. Quantization does not preserve the exact zeros the
+        HDF5-side test relies on.
+
+        A recording with no annotation has no IK failures, so its whole valid
+        region is one clean span.
 
         Spans are clipped to *valid_duration*: the BDF writer pads the last
-        data record with **edge values**, not zeros, so neither test excludes
-        the padded tail on its own.
+        data record with edge values, so the file runs past the data.
         """
         raw = mne.io.read_raw_bdf(filepath, preload=False, verbose="ERROR")
         limit = valid_duration if valid_duration is not None else raw.times[-1]
-
         annotations = raw.annotations
-        descriptions = [str(d) for d in annotations.description]
-        if self.IK_ANNOTATION in descriptions:
-            bad = [
-                (float(onset), float(onset) + float(duration))
-                for onset, duration, description in zip(
-                    annotations.onset,
-                    annotations.duration,
-                    descriptions,
-                    strict=True,
-                )
-                if description == self.IK_ANNOTATION
-            ]
-            return _complement(bad, limit)
-
-        return self._ik_clean_spans_from_signal(raw, limit)
-
-    def _ik_clean_spans_from_signal(
-        self, raw: tp.Any, limit: float
-    ) -> list[tuple[float, float]]:
-        """Fallback: recompute the all-zero test from the joint channels."""
-        picks = [
-            name for name in raw.ch_names if name.startswith(self.JOINT_CHANNEL_PREFIX)
-        ]
-        if not picks:
-            raise ValueError(
-                f"{raw.filenames[0]} has neither {self.IK_ANNOTATION} annotations nor "
-                f"{self.JOINT_CHANNEL_PREFIX}* channels; cannot detect IK failures."
+        bad = [
+            (float(onset), float(onset) + float(duration))
+            for onset, duration, description in zip(
+                annotations.onset,
+                annotations.duration,
+                annotations.description,
+                strict=True,
             )
-        joints = raw.get_data(picks=picks) * self.JOINT_SCALE
-        frequency = float(raw.info["sfreq"])
-        spans = contiguous_spans(~ik_failure_mask(joints))
-        seconds = [(start / frequency, stop / frequency) for start, stop in spans]
-        return _clip([(a, b) for a, b in seconds], limit)
+            if str(description) == self.IK_ANNOTATION
+        ]
+        return _complement(bad, limit)
 
     def _load_timeline_events(self, timeline: dict[str, tp.Any]) -> pd.DataFrame:
         matches = mne_bids.find_matching_paths(

@@ -56,7 +56,12 @@ Dataset Notes
 * **IK failures**: the inverse-kinematics solver failed on 12.7% of frames.
   NM000281 marks them with ``BAD_IK`` annotations, and the study emits one
   event per contiguous resolved run so no window straddles a failure --
-  matching upstream's ``skip_ik_failures``, its datamodule default.  Pass
+  matching upstream's ``skip_ik_failures``, its datamodule default.  The
+  annotations are the only usable source: over 60 sampled recordings,
+  upstream's all-zero test on the BDF joint samples agreed with them 87% of
+  the time on average and as little as 32%, usually reporting no failures at
+  all where the annotations mark 15% of the recording, because BDF
+  quantization does not preserve the exact zeros that test relies on.  Pass
   ``skip_ik_failures=False`` for one event per recording instead.
 * **Padding**: the BDF writer pads the final data record with edge values, so
   every span is clipped to the ``scans.tsv`` duration.
@@ -66,7 +71,7 @@ Dataset Notes
   in the release under ``sourcedata/``; ``--download`` otherwise fetches the
   standalone copy.  Without it the split columns are absent and the task
   fails at split time rather than inventing a split.
-* **Sampling rate**: ``NeuroPoseNet`` decimates 2 kHz to its
+* **Sampling rate**: ``NeuroPoseNet`` [Liu2021]_ decimates 2 kHz to its
   ``internal_sfreq`` and applies NeuroPose's original pooling schedule, where
   emg2pose instead keeps 2 kHz and widens that schedule (Section 3.5).  The
   receptive fields are comparable, but this route sees no EMG content above
