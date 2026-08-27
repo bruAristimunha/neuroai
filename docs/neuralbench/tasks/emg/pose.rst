@@ -112,27 +112,26 @@ Dataset Notes
   records out to 850 Hz.  Revisit before reading results against the
   published NeuroPose row.
 * **IK failures**: the offline inverse-kinematics solver failed on 12.7% of
-  frames, and the release marks those frames by writing an **all-zero joint
-  vector** -- there is no separate annotation.  Upstream detects them with
-  ``~np.all(np.isclose(joint_angles, 0), axis=-1)`` and, with
-  ``skip_ik_failures`` (its datamodule default, for train and val/test
-  alike), emits only windows lying inside contiguous resolved runs.  The
-  study does the same: each recording contributes one event per resolved
-  run, so no window straddles a failure.  Detection happens in radians, so a
-  genuinely small angle is not mistaken for the marker.  Set
-  ``Emg2pose(skip_ik_failures=False)`` to get one event per recording
-  instead.
+  frames.  NM000281 marks them with ``BAD_IK`` BDF annotations -- its README:
+  "BAD_IK annotations mark samples where inverse-kinematics labels are all
+  zero".  The study reads those annotations and emits one event per
+  contiguous resolved run, so no window straddles a failure.  Annotations are
+  preferred over recomputing the all-zero test upstream uses
+  (``~np.all(np.isclose(joint_angles, 0), axis=-1)``, its datamodule default
+  for train and val/test alike): they are authoritative, cheap to read, and
+  unaffected by BDF quantization.  The recomputation remains as a fallback
+  for a tree without annotations.  Set
+  ``Emg2pose(skip_ik_failures=False)`` for one event per recording instead.
 * **Windowing**: 5-s windows with a 5-s stride, so windows tile each
   event without overlap; runs shorter than one window are dropped.
-* **Zero padding**: every BDF is zero-padded up to a whole number of
-  one-second records, so the file runs past the data (``ValidSamples +
-  BDFPaddedSamples`` is always a multiple of 2000).  The padding is all-zero,
-  so the IK-failure test excludes it for free.  With
-  ``skip_ik_failures=False`` the event is instead bounded at
-  ``ValidSamples / SamplingFrequency``; that field is missing from 2,785 of
-  the 25,253 sidecars, and for those the session's ``scans.tsv`` ``duration``
-  column is used, which agrees exactly with
-  ``ValidSamples / SamplingFrequency`` on all 22,468 recordings carrying
+* **Padding**: every BDF is padded up to a whole number of one-second
+  records (``ValidSamples + BDFPaddedSamples`` is always a multiple of 2000).
+  The writer pads with **edge values, not zeros**, so neither the ``BAD_IK``
+  annotations nor the all-zero test excludes the tail on their own -- every
+  span is therefore clipped to ``ValidSamples / SamplingFrequency``.  That
+  field is missing from 2,785 of the 25,253 sidecars, and for those the
+  session's ``scans.tsv`` ``duration`` column is used, which agrees exactly
+  with ``ValidSamples / SamplingFrequency`` on all 22,468 recordings carrying
   both.
 
 Paper splits
@@ -201,13 +200,6 @@ aggregation.
    omits the split columns -- a BIDS-only download stays usable for
    exploration, but ``neuralbench emg pose`` will fail at split time, because
    there is no defensible split to fall back on.
-
-.. warning::
-
-   The all-zero IK-failure test is implemented from the upstream definition
-   and unit-tested, but has **not** been checked against a real NM000281 BDF
-   -- confirming that the failure frames survive the BIDS conversion as
-   exactly-zero joint channels needs a recording pulled on the cluster.
 
 .. warning::
 

@@ -11,6 +11,7 @@ import pytest
 from neuralfetch.studies.emg2pose import (
     Emg2pose,
     Emg2poseRecording,
+    _complement,
     contiguous_spans,
     ik_failure_mask,
 )
@@ -262,7 +263,9 @@ def test_events_split_on_ik_failures(monkeypatch, tmp_path):
     study = Emg2pose(path=tmp_path)
     _make_bids_tree(study.path)
     monkeypatch.setattr(
-        Emg2pose, "_ik_clean_spans", lambda self, _path: [(0.0, 2.5), (4.0, 1.5)]
+        Emg2pose,
+        "_ik_clean_spans",
+        lambda self, _path, _valid: [(0.0, 2.5), (4.0, 1.5)],
     )
 
     timeline = next(iter(study.iter_timelines()))
@@ -273,3 +276,71 @@ def test_events_split_on_ik_failures(monkeypatch, tmp_path):
     # Recording-level metadata is copied onto every span.
     assert events["user"].tolist() == ["user-123", "user-123"]
     assert events["type"].tolist() == ["Emg2poseRecording"] * 2
+
+
+@pytest.mark.parametrize(
+    "bad, limit, expected",
+    [
+        ([], 10.0, [(0.0, 10.0)]),
+        ([(2.0, 3.0)], 10.0, [(0.0, 2.0), (3.0, 7.0)]),
+        ([(0.0, 10.0)], 10.0, []),
+        ([(0.0, 2.0)], 10.0, [(2.0, 8.0)]),
+        # A BAD_IK span running into the padded tail is clipped at the limit.
+        ([(2.0, 4.0)], 3.0, [(0.0, 2.0)]),
+    ],
+)
+def test_complement_of_bad_spans(bad, limit, expected):
+    """Clean spans are the complement of BAD_IK, clipped to the valid region."""
+    assert _complement(bad, limit) == expected
+
+
+def test_ik_spans_prefer_bad_ik_annotations(monkeypatch, tmp_path):
+    """NM000281 marks IK failures with BAD_IK annotations; use them, not the
+    all-zero recomputation, and never read the joint signal to find them."""
+    study = Emg2pose(path=tmp_path)
+    raw = mne.io.RawArray(
+        np.ones((36, 20_000)),
+        mne.create_info(
+            [f"emg{i}" for i in range(16)] + [f"joint{i}" for i in range(20)],
+            sfreq=2000.0,
+            ch_types=["emg"] * 16 + ["misc"] * 20,
+        ),
+        verbose="ERROR",
+    )
+    raw.set_annotations(
+        mne.Annotations(onset=[2.0], duration=[3.0], description=["BAD_IK"])
+    )
+    monkeypatch.setattr(
+        "neuralfetch.studies.emg2pose.mne.io.read_raw_bdf",
+        lambda *_a, **_k: raw,
+    )
+
+    def _fail(*_args, **_kwargs):
+        raise AssertionError("must not fall back to the signal when annotated")
+
+    monkeypatch.setattr(Emg2pose, "_ik_clean_spans_from_signal", _fail)
+
+    assert study._ik_clean_spans("x.bdf", 10.0) == [(0.0, 2.0), (5.0, 5.0)]
+
+
+def test_ik_spans_fall_back_to_signal_without_annotations(monkeypatch, tmp_path):
+    """Without annotations, recompute the all-zero test, still clipped."""
+    study = Emg2pose(path=tmp_path)
+    joints = np.ones((20, 20_000)) * 1e-6  # 1.0 rad after JOINT_SCALE
+    joints[:, 4_000:8_000] = 0.0
+    raw = mne.io.RawArray(
+        np.concatenate([np.ones((16, 20_000)), joints]),
+        mne.create_info(
+            [f"emg{i}" for i in range(16)] + [f"joint{i}" for i in range(20)],
+            sfreq=2000.0,
+            ch_types=["emg"] * 16 + ["misc"] * 20,
+        ),
+        verbose="ERROR",
+    )
+    monkeypatch.setattr(
+        "neuralfetch.studies.emg2pose.mne.io.read_raw_bdf",
+        lambda *_a, **_k: raw,
+    )
+
+    # Clipped at 9 s, so the trailing clean span stops short of the padding.
+    assert study._ik_clean_spans("x.bdf", 9.0) == [(0.0, 2.0), (4.0, 5.0)]

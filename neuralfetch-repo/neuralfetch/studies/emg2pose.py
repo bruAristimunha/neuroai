@@ -60,6 +60,33 @@ def contiguous_spans(mask: np.ndarray) -> list[tuple[int, int]]:
     return list(zip(edges[::2].tolist(), edges[1::2].tolist()))
 
 
+def _clip(spans: list[tuple[float, float]], limit: float) -> list[tuple[float, float]]:
+    """Clip ``(start, stop)`` spans to ``[0, limit]``, as ``(start, duration)``."""
+    out = []
+    for start, stop in spans:
+        start, stop = max(0.0, start), min(stop, limit)
+        if stop > start:
+            out.append((start, stop - start))
+    return out
+
+
+def _complement(
+    bad: list[tuple[float, float]], limit: float
+) -> list[tuple[float, float]]:
+    """``(start, duration)`` spans of ``[0, limit]`` not covered by *bad*."""
+    good: list[tuple[float, float]] = []
+    cursor = 0.0
+    for start, stop in sorted(bad):
+        if start > cursor:
+            good.append((cursor, min(start, limit)))
+        cursor = max(cursor, stop)
+        if cursor >= limit:
+            break
+    if cursor < limit:
+        good.append((cursor, limit))
+    return _clip(good, limit)
+
+
 class Emg2poseRecording(etypes.Emg):
     """One EMG2Pose BIDS recording."""
 
@@ -275,32 +302,67 @@ class Emg2pose(study.Study):
             yield timeline
 
     JOINT_CHANNEL_PREFIX: tp.ClassVar[str] = "joint"
+    #: NM000281 marks IK failures with this BDF annotation.
+    IK_ANNOTATION: tp.ClassVar[str] = "BAD_IK"
     #: The BDF physical header declares ``uV`` for every channel, so MNE
     #: returns joint angles 1e6 times too small. IK failures are detected in
     #: radians, as upstream does, so a genuinely small angle is not mistaken
     #: for the all-zero failure marker.
     JOINT_SCALE: tp.ClassVar[float] = 1e6
 
-    def _ik_clean_spans(self, filepath: str) -> list[tuple[float, float]]:
+    def _ik_clean_spans(
+        self, filepath: str, valid_duration: float | None
+    ) -> list[tuple[float, float]]:
         """``(start, duration)`` seconds for each span with resolved IK.
 
-        Reads only the joint channels. Padding at the end of a recording is
-        all-zero too, so it falls out of the mask along with the real
-        failures.
+        NM000281 records IK failures as ``BAD_IK`` BDF annotations -- its
+        README: "BAD_IK annotations mark samples where inverse-kinematics
+        labels are all zero". Those annotations are the authoritative marker
+        and are cheap to read, so they are preferred over recomputing the
+        all-zero test on quantized joint samples. The recomputation stays as a
+        fallback for a tree without annotations.
+
+        Spans are clipped to *valid_duration*: the BDF writer pads the last
+        data record with **edge values**, not zeros, so neither test excludes
+        the padded tail on its own.
         """
         raw = mne.io.read_raw_bdf(filepath, preload=False, verbose="ERROR")
+        limit = valid_duration if valid_duration is not None else raw.times[-1]
+
+        annotations = raw.annotations
+        descriptions = [str(d) for d in annotations.description]
+        if self.IK_ANNOTATION in descriptions:
+            bad = [
+                (float(onset), float(onset) + float(duration))
+                for onset, duration, description in zip(
+                    annotations.onset,
+                    annotations.duration,
+                    descriptions,
+                    strict=True,
+                )
+                if description == self.IK_ANNOTATION
+            ]
+            return _complement(bad, limit)
+
+        return self._ik_clean_spans_from_signal(raw, limit)
+
+    def _ik_clean_spans_from_signal(
+        self, raw: tp.Any, limit: float
+    ) -> list[tuple[float, float]]:
+        """Fallback: recompute the all-zero test from the joint channels."""
         picks = [
             name for name in raw.ch_names if name.startswith(self.JOINT_CHANNEL_PREFIX)
         ]
         if not picks:
             raise ValueError(
-                f"No {self.JOINT_CHANNEL_PREFIX}* channels in {filepath}; cannot "
-                "detect IK failures."
+                f"{raw.filenames[0]} has neither {self.IK_ANNOTATION} annotations nor "
+                f"{self.JOINT_CHANNEL_PREFIX}* channels; cannot detect IK failures."
             )
         joints = raw.get_data(picks=picks) * self.JOINT_SCALE
         frequency = float(raw.info["sfreq"])
         spans = contiguous_spans(~ik_failure_mask(joints))
-        return [(start / frequency, (stop - start) / frequency) for start, stop in spans]
+        seconds = [(start / frequency, stop / frequency) for start, stop in spans]
+        return _clip([(a, b) for a, b in seconds], limit)
 
     def _load_timeline_events(self, timeline: dict[str, tp.Any]) -> pd.DataFrame:
         matches = mne_bids.find_matching_paths(
@@ -352,9 +414,10 @@ class Emg2pose(study.Study):
         not know the window length, and ``stride_drop_incomplete`` drops them
         at segmentation time.
         """
+        valid = self._valid_duration(timeline)
         if self.skip_ik_failures:
-            return list(self._ik_clean_spans(filepath))
-        return [(0.0, self._valid_duration(timeline))]
+            return list(self._ik_clean_spans(filepath, valid))
+        return [(0.0, valid)]
 
     @staticmethod
     def _valid_duration(timeline: dict[str, tp.Any]) -> float | None:
