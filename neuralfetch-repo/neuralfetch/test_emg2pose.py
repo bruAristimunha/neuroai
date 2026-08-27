@@ -8,7 +8,12 @@ import mne
 import numpy as np
 import pytest
 
-from neuralfetch.studies.emg2pose import Emg2pose, Emg2poseRecording
+from neuralfetch.studies.emg2pose import (
+    Emg2pose,
+    Emg2poseRecording,
+    contiguous_spans,
+    ik_failure_mask,
+)
 
 
 def _make_split_metadata(bids_root, recordings=1, splits=("train", "test")):
@@ -62,7 +67,7 @@ def _make_bids_tree(root, recordings=1):
 
 def test_emg2pose_study_source(tmp_path):
     """BIDS discovery yields one raw EMG event for each BDF recording."""
-    study = Emg2pose(path=tmp_path)
+    study = Emg2pose(path=tmp_path, skip_ik_failures=False)
     bids_root = _make_bids_tree(study.path)
 
     assert study.bids_root == bids_root
@@ -137,7 +142,7 @@ def test_bids_reader_uses_bids_channel_metadata(monkeypatch, tmp_path):
 @pytest.mark.parametrize("recordings", [1, 2, 3, 4])
 def test_emg2pose_discovers_each_bids_run(tmp_path, recordings):
     """Runs are BIDS entities rather than an inferred paper manifest."""
-    study = Emg2pose(path=tmp_path)
+    study = Emg2pose(path=tmp_path, skip_ik_failures=False)
     _make_bids_tree(study.path, recordings=recordings)
 
     assert len(list(study.iter_timelines())) == recordings
@@ -145,7 +150,7 @@ def test_emg2pose_discovers_each_bids_run(tmp_path, recordings):
 
 def test_event_duration_stops_at_valid_samples(tmp_path):
     """Windows are bounded by the un-padded region, not the padded BDF."""
-    study = Emg2pose(path=tmp_path)
+    study = Emg2pose(path=tmp_path, skip_ik_failures=False)
     _make_bids_tree(study.path)
 
     timeline = next(iter(study.iter_timelines()))
@@ -157,7 +162,7 @@ def test_event_duration_stops_at_valid_samples(tmp_path):
 
 def test_event_duration_falls_back_to_scans_tsv(tmp_path):
     """ValidSamples is absent from some sidecars; scans.tsv covers them."""
-    study = Emg2pose(path=tmp_path)
+    study = Emg2pose(path=tmp_path, skip_ik_failures=False)
     _make_bids_tree(study.path)
 
     timeline = next(iter(study.iter_timelines()))
@@ -170,7 +175,7 @@ def test_event_duration_falls_back_to_scans_tsv(tmp_path):
 
 def test_event_duration_absent_without_any_source(tmp_path):
     """With neither ValidSamples nor scans.tsv, duration is left to auto-fill."""
-    study = Emg2pose(path=tmp_path)
+    study = Emg2pose(path=tmp_path, skip_ik_failures=False)
     _make_bids_tree(study.path)
 
     timeline = next(iter(study.iter_timelines()))
@@ -183,7 +188,7 @@ def test_event_duration_absent_without_any_source(tmp_path):
 
 def test_paper_splits_joined_from_metadata(tmp_path):
     """metadata.csv joins onto recordings through the sidecar's SourceFile."""
-    study = Emg2pose(path=tmp_path)
+    study = Emg2pose(path=tmp_path, skip_ik_failures=False)
     bids_root = _make_bids_tree(study.path, recordings=2)
     _make_split_metadata(bids_root, recordings=2)
 
@@ -198,7 +203,7 @@ def test_paper_splits_joined_from_metadata(tmp_path):
 
 def test_split_columns_absent_without_metadata(tmp_path):
     """A BIDS-only download stays usable, just without the paper's splits."""
-    study = Emg2pose(path=tmp_path)
+    study = Emg2pose(path=tmp_path, skip_ik_failures=False)
     _make_bids_tree(study.path)
 
     timeline = next(iter(study.iter_timelines()))
@@ -212,7 +217,7 @@ def test_split_columns_absent_without_metadata(tmp_path):
 
 def test_malformed_metadata_table_is_rejected(tmp_path):
     """A CSV without the expected columns fails loudly rather than silently."""
-    study = Emg2pose(path=tmp_path)
+    study = Emg2pose(path=tmp_path, skip_ik_failures=False)
     bids_root = _make_bids_tree(study.path)
     path = bids_root / "sourcedata" / "emg2pose_metadata.csv"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -220,3 +225,51 @@ def test_malformed_metadata_table_is_rejected(tmp_path):
 
     with pytest.raises(ValueError, match="missing expected column"):
         _ = study.recording_splits
+
+
+def test_ik_failure_mask_marks_all_zero_frames():
+    """An IK failure is an all-zero joint vector, as upstream defines it."""
+    joints = np.zeros((20, 6))
+    joints[:, 2:4] = 0.5
+    joints[3, 5] = 1e-3  # a single non-zero joint is enough to count as resolved
+
+    assert ik_failure_mask(joints).tolist() == [True, True, False, False, True, False]
+
+
+def test_ik_failure_mask_keeps_small_angles():
+    """Small but real angles in radians are not mistaken for the zero marker."""
+    joints = np.full((20, 3), 1e-4)
+
+    assert not ik_failure_mask(joints).any()
+
+
+@pytest.mark.parametrize(
+    "mask, expected",
+    [
+        ([0, 0, 0], []),
+        ([1, 1, 1], [(0, 3)]),
+        ([0, 1, 1, 0, 1], [(1, 3), (4, 5)]),
+        ([1, 0, 0, 1], [(0, 1), (3, 4)]),
+    ],
+)
+def test_contiguous_spans(mask, expected):
+    """Spans are half-open and cover every run of True."""
+    assert contiguous_spans(np.array(mask, dtype=bool)) == expected
+
+
+def test_events_split_on_ik_failures(monkeypatch, tmp_path):
+    """With skip_ik_failures, each resolved run becomes its own event."""
+    study = Emg2pose(path=tmp_path)
+    _make_bids_tree(study.path)
+    monkeypatch.setattr(
+        Emg2pose, "_ik_clean_spans", lambda self, _path: [(0.0, 2.5), (4.0, 1.5)]
+    )
+
+    timeline = next(iter(study.iter_timelines()))
+    events = study._load_timeline_events(timeline)
+
+    assert events["start"].tolist() == [0.0, 4.0]
+    assert events["duration"].tolist() == [2.5, 1.5]
+    # Recording-level metadata is copied onto every span.
+    assert events["user"].tolist() == ["user-123", "user-123"]
+    assert events["type"].tolist() == ["Emg2poseRecording"] * 2

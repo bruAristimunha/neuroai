@@ -1,0 +1,16 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+# All rights reserved.
+#
+# This source code is licensed under the license found in the
+# LICENSE file in the root directory of this source tree.
+
+# NeuroPoseNet (Liu et al., 2021), the paper's ``regression_neuropose``
+# baseline — pairs with emg/pose.  ``n_bands: 16`` matches the emg2pose
+# wristband; the model resamples internally to the 200 Hz the original
+# Myo-band architecture was designed for.
+brain_model_config:
+  =replace=: true
+  name: NeuroPoseNet
+  kwargs:
+    n_bands: 16
+    internal_sfreq: 200.0

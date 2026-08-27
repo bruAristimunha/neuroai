@@ -9,7 +9,9 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+import mne
 import mne_bids
+import numpy as np
 import pandas as pd
 import pydantic
 
@@ -31,6 +33,31 @@ _SPLIT_COLUMNS = (
 #: Public standalone copy of the metadata table, for users whose BIDS download
 #: skipped ``sourcedata/``.
 METADATA_URL = "https://fb-ctrl-oss.s3.amazonaws.com/emg2pose/emg2pose_metadata.csv"
+
+
+def ik_failure_mask(joint_angles: np.ndarray) -> np.ndarray:
+    """``True`` where the inverse-kinematics solver failed.
+
+    Reproduces ``emg2pose.utils.get_ik_failures_mask``: the upstream release
+    writes an all-zero joint vector wherever the offline IK solver could not
+    resolve a frame, which the paper reports for 12.7% of frames. There is no
+    separate annotation -- the zeros *are* the marker.
+
+    Parameters
+    ----------
+    joint_angles : np.ndarray
+        Joint angles shaped ``(joint, time)``.
+    """
+    return np.all(np.isclose(joint_angles, 0.0), axis=0)
+
+
+def contiguous_spans(mask: np.ndarray) -> list[tuple[int, int]]:
+    """Half-open ``(start, stop)`` index spans where *mask* is ``True``."""
+    if mask.ndim != 1:
+        raise ValueError(f"mask must be 1-D, got shape {mask.shape}")
+    padded = np.concatenate(([False], mask.astype(bool), [False]))
+    edges = np.flatnonzero(padded[1:] != padded[:-1])
+    return list(zip(edges[::2].tolist(), edges[1::2].tolist()))
 
 
 class Emg2poseRecording(etypes.Emg):
@@ -60,12 +87,19 @@ class Emg2pose(study.Study):
         Explicit path to ``emg2pose_metadata.csv``. Defaults to the copy
         shipped inside the release at ``sourcedata/emg2pose_metadata.csv``;
         a standalone copy (~5 MiB) is published at :data:`METADATA_URL`.
+    skip_ik_failures : bool
+        Emit one event per contiguous span of frames whose inverse-kinematics
+        labels resolved, instead of one event per recording. Matches the
+        upstream ``skip_ik_failures`` datamodule default, which is ``True``
+        for train and validation/test alike. Costs one pass over each
+        recording's joint channels when the events are first built.
     """
 
     NEMAR_DATASET_ID: tp.ClassVar[str] = "nm000281"
     aliases: tp.ClassVar[tuple[str, ...]] = ("emg2pose", "nm000281")
     description: tp.ClassVar[str] = "16-channel EMG and hand-pose recordings."
     split_metadata: Path | None = None
+    skip_ik_failures: bool = True
     _bids_root_cache: Path | None = pydantic.PrivateAttr(default=None)
     _participant_users_cache: dict[str, str] | None = pydantic.PrivateAttr(default=None)
     _split_metadata_cache: dict[str, dict[str, tp.Any]] | None = pydantic.PrivateAttr(
@@ -240,6 +274,34 @@ class Emg2pose(study.Study):
             timeline.update(self._splits_for(source_file))
             yield timeline
 
+    JOINT_CHANNEL_PREFIX: tp.ClassVar[str] = "joint"
+    #: The BDF physical header declares ``uV`` for every channel, so MNE
+    #: returns joint angles 1e6 times too small. IK failures are detected in
+    #: radians, as upstream does, so a genuinely small angle is not mistaken
+    #: for the all-zero failure marker.
+    JOINT_SCALE: tp.ClassVar[float] = 1e6
+
+    def _ik_clean_spans(self, filepath: str) -> list[tuple[float, float]]:
+        """``(start, duration)`` seconds for each span with resolved IK.
+
+        Reads only the joint channels. Padding at the end of a recording is
+        all-zero too, so it falls out of the mask along with the real
+        failures.
+        """
+        raw = mne.io.read_raw_bdf(filepath, preload=False, verbose="ERROR")
+        picks = [
+            name for name in raw.ch_names if name.startswith(self.JOINT_CHANNEL_PREFIX)
+        ]
+        if not picks:
+            raise ValueError(
+                f"No {self.JOINT_CHANNEL_PREFIX}* channels in {filepath}; cannot "
+                "detect IK failures."
+            )
+        joints = raw.get_data(picks=picks) * self.JOINT_SCALE
+        frequency = float(raw.info["sfreq"])
+        spans = contiguous_spans(~ik_failure_mask(joints))
+        return [(start / frequency, (stop - start) / frequency) for start, stop in spans]
+
     def _load_timeline_events(self, timeline: dict[str, tp.Any]) -> pd.DataFrame:
         matches = mne_bids.find_matching_paths(
             root=self.bids_root,
@@ -255,10 +317,11 @@ class Emg2pose(study.Study):
             raise ValueError(
                 f"Expected one BDF for BIDS timeline {timeline}, got {len(matches)}"
             )
-        event = {
+        yield_rows: list[dict[str, tp.Any]] = []
+        filepath = str(matches[0].fpath)
+        base = {
             "type": "Emg2poseRecording",
-            "filepath": str(matches[0].fpath),
-            "start": 0.0,
+            "filepath": filepath,
             "subject": timeline["subject"],
             "user": timeline["user"],
             "stage": timeline["stage"],
@@ -267,13 +330,31 @@ class Emg2pose(study.Study):
             "valid_samples": timeline["valid_samples"],
             "user_stage": timeline["user_stage"],
         }
-        duration = self._valid_duration(timeline)
-        if duration is not None:
-            event["duration"] = duration
         for column in _SPLIT_COLUMNS:
             if column in timeline:
-                event[column] = timeline[column]
-        return pd.DataFrame([event])
+                base[column] = timeline[column]
+
+        for start, duration in self._event_spans(timeline, filepath):
+            span = dict(base, start=start)
+            if duration is not None:
+                span["duration"] = duration
+            yield_rows.append(span)
+        return pd.DataFrame(yield_rows)
+
+    def _event_spans(
+        self, timeline: dict[str, tp.Any], filepath: str
+    ) -> list[tuple[float, float | None]]:
+        """Spans of a recording to emit as events.
+
+        With ``skip_ik_failures`` this is one span per contiguous run of
+        resolved IK frames; otherwise it is the single un-padded region.
+        Spans shorter than a window are not filtered here -- the study does
+        not know the window length, and ``stride_drop_incomplete`` drops them
+        at segmentation time.
+        """
+        if self.skip_ik_failures:
+            return list(self._ik_clean_spans(filepath))
+        return [(0.0, self._valid_duration(timeline))]
 
     @staticmethod
     def _valid_duration(timeline: dict[str, tp.Any]) -> float | None:

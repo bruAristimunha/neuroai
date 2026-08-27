@@ -4,7 +4,7 @@ Hand pose decoding
 | **Name**: pose
 | **Category**: motor / hand-pose decoding
 | **Dataset**: :py:class:`~neuralset.studies.Emg2pose` (NM000281, emg2pose)
-| **Objective**: :bdg-dark:`20-joint angle regression`
+| **Objective**: :bdg-dark:`20-joint angle trajectory regression`
 | **Split**: The paper's ``train`` / ``val`` / ``test`` assignment
 | **Upstream**: `paper <https://arxiv.org/abs/2412.02725>`_, `code <https://github.com/facebookresearch/emg2pose>`_, `blog <https://ai.meta.com/blog/open-sourcing-surface-electromyography-datasets-neurips-2024/>`_
 
@@ -19,13 +19,13 @@ Usage
 .. code-block:: bash
 
    # Auto-fetch NM000281 via eegdash
-   neuralbench emg pose -m eegnet --download
+   neuralbench emg pose -m neuropose --download
 
    # Local 2-epoch sanity check
-   neuralbench emg pose -m eegnet --debug
+   neuralbench emg pose -m neuropose --debug
 
    # Full benchmark run
-   neuralbench emg pose -m eegnet
+   neuralbench emg pose -m neuropose
 
 .. dropdown:: Show ``config.yaml``
 
@@ -45,25 +45,30 @@ per hand tracked on a 26-camera OptiTrack rig, low-pass filtered at 15 Hz and
 upsampled to 2 kHz; the sEMG was high-pass filtered at 40 Hz and rescaled so
 its noise floor has unit standard deviation.
 
-Each 5-s window is mapped to the joint-angle vector at the window's right
-edge, so the readout is causal: pose at time *t* is predicted from the EMG
-that precedes it.  Targets are radians; the default metrics are RMSE, MAE,
-Pearson *r*, R², and normalized RMSE over the 20 outputs.
+Each 5-s window (10,000 samples at 2 kHz, the paper's evaluation length) is
+mapped to the joint-angle *trajectory* over that window -- 20 angles per
+frame, not a single pose.  Targets are in **degrees**, the unit the paper
+reports angular error in, so ``val/mae`` reads directly against its tables.
+The default metrics are RMSE, MAE, Pearson *r*, R², and normalized RMSE.
 
-As compared to the original paper, the NeuralBench default configuration
-predicts a single end-of-window pose rather than rolling a state-space
-tracker across the whole session, keeping turn-around tractable.  The paper's
-``BAD_IK`` masking and per-user aggregation are not applied, so absolute
-errors are not directly comparable to the published tracking numbers.  The
-train / validation / test assignment, however, is the paper's own (see
-`Paper splits`_).
+This is the paper's **regression** setting.  Upstream
+``PoseModule._predict_pose`` is ``pred = self.network(emg)`` -- no state
+conditioning and no initial pose (``regression_neuropose.yaml`` sets
+``provide_initial_pos: False``, ``predict_vel: False``) -- so a plain
+sequence-to-sequence backbone is the right shape.  The default is
+``NeuroPoseNet``, the paper's NeuroPose baseline.
+
+The paper's **tracking** setting is not implemented: it feeds the initial
+pose in and conditions on the previous state at each step
+(``StatePoseModule``), which is a model-side change rather than a
+configuration one.  Published tracking numbers are therefore not the
+comparison point for this task; the regression baselines are.
 
 The upstream repository ships three reference experiments --
 ``tracking_vemg2pose``, ``regression_vemg2pose``, and
 ``regression_neuropose`` -- along with pre-trained checkpoints for vemg2pose
-(tracking and regression) and NeuroPose (regression).  None of them are
-ported here yet; ``eegnet`` and the constant baselines are what the task runs
-against today.
+(tracking and regression) and NeuroPose (regression).  ``regression_neuropose``
+is the one this task mirrors.
 
 Dataset Notes
 ~~~~~~~~~~~~~
@@ -95,18 +100,29 @@ Dataset Notes
   The task splits on ``user``, and ``stage`` / ``side`` ride along in
   ``summary_columns`` for per-stage and per-hand breakdowns at aggregation
   time.
+* **IK failures**: the offline inverse-kinematics solver failed on 12.7% of
+  frames, and the release marks those frames by writing an **all-zero joint
+  vector** -- there is no separate annotation.  Upstream detects them with
+  ``~np.all(np.isclose(joint_angles, 0), axis=-1)`` and, with
+  ``skip_ik_failures`` (its datamodule default, for train and val/test
+  alike), emits only windows lying inside contiguous resolved runs.  The
+  study does the same: each recording contributes one event per resolved
+  run, so no window straddles a failure.  Detection happens in radians, so a
+  genuinely small angle is not mistaken for the marker.  Set
+  ``Emg2pose(skip_ik_failures=False)`` to get one event per recording
+  instead.
 * **Windowing**: 5-s windows with a 5-s stride, so windows tile each
-  recording without overlap; incomplete trailing windows are dropped.
+  event without overlap; runs shorter than one window are dropped.
 * **Zero padding**: every BDF is zero-padded up to a whole number of
   one-second records, so the file runs past the data (``ValidSamples +
-  BDFPaddedSamples`` is always a multiple of 2000).  The study bounds each
-  recording's event at ``ValidSamples / SamplingFrequency``, so windows never
-  reach the padded tail -- without it the last window of a recording could
-  end on up to 0.999 s of zeros.  ``ValidSamples`` is missing from 2,785 of
-  the 25,253 sidecars; for those, the session's ``scans.tsv`` ``duration``
-  column is used instead.  It agrees exactly with
-  ``ValidSamples / SamplingFrequency`` on all 22,468 recordings that carry
-  both, and together the two cover the release with no gaps.
+  BDFPaddedSamples`` is always a multiple of 2000).  The padding is all-zero,
+  so the IK-failure test excludes it for free.  With
+  ``skip_ik_failures=False`` the event is instead bounded at
+  ``ValidSamples / SamplingFrequency``; that field is missing from 2,785 of
+  the 25,253 sidecars, and for those the session's ``scans.tsv`` ``duration``
+  column is used, which agrees exactly with
+  ``ValidSamples / SamplingFrequency`` on all 22,468 recordings carrying
+  both.
 
 Paper splits
 ~~~~~~~~~~~~
@@ -174,6 +190,13 @@ aggregation.
    omits the split columns -- a BIDS-only download stays usable for
    exploration, but ``neuralbench emg pose`` will fail at split time, because
    there is no defensible split to fall back on.
+
+.. warning::
+
+   The all-zero IK-failure test is implemented from the upstream definition
+   and unit-tested, but has **not** been checked against a real NM000281 BDF
+   -- confirming that the failure frames survive the BIDS conversion as
+   exactly-zero joint channels needs a recording pulled on the cluster.
 
 .. warning::
 

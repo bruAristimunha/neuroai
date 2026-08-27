@@ -49,31 +49,33 @@ data:
       min_samples_per_job: 200
   target:
     =replace=: true
-    # The 20 joint angles live as MISC channels in the same BDF as the EMG,
-    # so the target is the same reader restricted to those channels.
-    # ``time_aggregation: last`` makes the readout causal: predict the pose at
-    # the end of the window from the EMG that precedes it.
-    name: TimeAggregatedExtractor
-    time_aggregation: last
+    # The 20 joint angles are MISC channels in the same BDF as the EMG, so the
+    # target is the same reader restricted to those channels.  The paper
+    # regresses a whole trajectory, not a single pose, so this stays dense in
+    # time; ``TimeMajorExtractor`` puts it in (T, C) to match the backbone's
+    # per-frame output, because the loss flattens both to (batch, -1).
+    name: TimeMajorExtractor
     extractor:
       name: EmgExtractor
       event_types: Emg
       picks: [misc]
       frequency: 2000.0
-      # The BDF physical header declares ``uV`` for all 36 channels, so MNE
-      # returns the joint channels 1e6 times too small.  This restores
-      # radians.  It is a file-format correction, deliberately kept in the
-      # task rather than hidden in the generic study reader.
-      scale_factor: 1.0e+6
+      # Two corrections in one factor.  The BDF physical header declares
+      # ``uV`` for all 36 channels, so MNE returns the joint channels 1e6
+      # times too small; ``* 1e6`` restores radians.  ``* 180 / pi`` then
+      # converts to degrees, which is what the paper reports angular error in
+      # (Section 3.3), so ``val/mae`` is directly readable against Table 2.
+      scale_factor: 57295779.51308232
       filter: null
       notch_filter: null
       baseline: null
       scaler: null
       clamp: null
-  # 5-s windows, non-overlapping (stride = duration), matching the paper's
-  # window length.  Each recording's event duration is bounded by the sidecar's
-  # ``ValidSamples``, so windows never run into the zero padding that brings
-  # every BDF up to a whole number of one-second records.
+  # The paper evaluates 5-s trajectories (10,000 samples at 2 kHz).  Windows
+  # tile each event without overlap; a span shorter than one window is dropped.
+  # Events are the contiguous runs of resolved inverse kinematics, so no window
+  # spans an IK failure -- nor the zero padding that brings every BDF up to a
+  # whole number of one-second records, which the same all-zero test catches.
   trigger_event_type: Emg2poseRecording
   start: 0.0
   duration: 5.0
@@ -81,6 +83,18 @@ data:
   stride_drop_incomplete: true
   summary_columns: [user, stage, side, generalization]
 brain_model_output_size: &brain_model_output_size 20
+# The paper's regression setting is a plain sequence-to-sequence map --
+# ``PoseModule._predict_pose`` is ``pred = self.network(emg)``, with no state
+# conditioning and no initial pose (``regression_neuropose.yaml``).  The
+# default backbone is therefore a dense per-frame regressor; models that do not
+# override ``brain_model_config`` inherit it rather than the global EEGNet
+# default, whose single-vector output cannot express a trajectory.
+brain_model_config:
+  =replace=: true
+  name: NeuroPoseNet
+  kwargs:
+    n_bands: 16
+    internal_sfreq: 200.0
 trainer_config:
   monitor: val/mae
   mode: min

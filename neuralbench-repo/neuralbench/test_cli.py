@@ -4,6 +4,7 @@
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
 
+import math
 import shutil
 import typing as tp
 import warnings
@@ -196,9 +197,13 @@ def test_emg_pose_task_entry_point() -> None:
     )
     data = Data(**configs[0]["data"])
     assert data.neuro.picks == ("emg",)
-    # The 20 joint angles are MISC channels in the same BDF, restored from the
-    # BDF's uV physical header to radians.
+    # The 20 joint angles are MISC channels in the same BDF. The target stays
+    # dense in time (the paper regresses a trajectory) and is transposed to
+    # (T, C) so it flattens the same way as the backbone's per-frame output.
     target: tp.Any = data.target
+    assert type(target).__name__ == "TimeMajorExtractor"
     assert target.extractor.picks == ("misc",)
-    assert target.extractor.scale_factor == 1e6
+    # uV header -> radians (1e6), then radians -> degrees, the paper's unit.
+    assert target.extractor.scale_factor == pytest.approx(1e6 * 180 / math.pi)
     assert data.trigger_event_type == "Emg2poseRecording"
+    assert configs[0]["brain_model_config"]["name"] == "NeuroPoseNet"
