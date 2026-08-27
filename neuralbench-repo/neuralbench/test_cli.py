@@ -175,3 +175,30 @@ def test_run_benchmark_cli_help_smoke(
     out = capsys.readouterr().out
     assert "available datasets per task:" in out
     assert "eeg" in out
+
+
+def test_emg_pose_task_entry_point() -> None:
+    """emg/pose resolves and builds a Data with the joint-angle target wired up."""
+    config = ConfDict(load_yaml_config(DEFAULTS_DIR / "config.yaml"))
+    grid = ConfDict(load_yaml_config(DEFAULTS_DIR / "grid.yaml"))
+    configs = prepare_task_configs(
+        config,
+        grid,
+        "emg",
+        "pose",
+        use_task_grid=False,
+        debug=False,
+        force=False,
+        prepare=False,
+        download=False,
+        models=[None],
+        datasets=None,
+    )
+    data = Data(**configs[0]["data"])
+    assert data.neuro.picks == ("emg",)
+    # The 20 joint angles are MISC channels in the same BDF, restored from the
+    # BDF's uV physical header to radians.
+    target: tp.Any = data.target
+    assert target.extractor.picks == ("misc",)
+    assert target.extractor.scale_factor == 1e6
+    assert data.trigger_event_type == "Emg2poseRecording"

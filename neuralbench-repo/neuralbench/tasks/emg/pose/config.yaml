@@ -1,0 +1,91 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+# All rights reserved.
+#
+# This source code is licensed under the license found in the
+# LICENSE file in the root directory of this source tree.
+
+# emg/pose regression task: surface-EMG → hand joint angles (Emg2pose, NM000281).
+# Cross-user baseline: the paper's held-out-user condition, expressed as a
+# leave-subjects-out split over the BIDS ``user`` column that the study reads
+# from ``participants.tsv``.
+
+data:
+  batch_size: 16
+  study:
+    source:
+      name: Emg2pose
+    split:
+      # Held-out-user generalization: no user contributes recordings to more
+      # than one fold.  ``user`` (not ``subject``) is the paper's identity
+      # column -- the BIDS conversion assigns one subject label per user, but
+      # the study carries the original label so the split stays paper-aligned
+      # if that ever changes.
+      name: SklearnSplit
+      split_by: user
+      valid_split_ratio: 0.2
+      test_split_ratio: 0.2
+      valid_random_state: 33
+      test_random_state: 33
+  # No filter / notch / baseline / scaler / clamp: the paper feeds raw 2 kHz
+  # EMG straight to the model, same convention as ``emg/typing``.
+  neuro:
+    =replace=: true
+    name: EmgExtractor
+    picks: [emg]
+    frequency: 2000.0
+    filter: null
+    notch_filter: null
+    baseline: null
+    scaler: null
+    clamp: null
+    infra:
+      cluster: auto
+      folder: !!python/name:neuralbench.config_manager.CACHE_DIR
+      keep_in_ram: true
+      slurm_partition: !!python/name:neuralbench.config_manager.SLURM_PARTITION
+      timeout_min: 180
+      gpus_per_node: 1
+      cpus_per_task: 10
+      min_samples_per_job: 200
+  target:
+    =replace=: true
+    # The 20 joint angles live as MISC channels in the same BDF as the EMG,
+    # so the target is the same reader restricted to those channels.
+    # ``time_aggregation: last`` makes the readout causal: predict the pose at
+    # the end of the window from the EMG that precedes it.
+    name: TimeAggregatedExtractor
+    time_aggregation: last
+    extractor:
+      name: EmgExtractor
+      event_types: Emg
+      picks: [misc]
+      frequency: 2000.0
+      # The BDF physical header declares ``uV`` for all 36 channels, so MNE
+      # returns the joint channels 1e6 times too small.  This restores
+      # radians.  It is a file-format correction, deliberately kept in the
+      # task rather than hidden in the generic study reader.
+      scale_factor: 1.0e+6
+      filter: null
+      notch_filter: null
+      baseline: null
+      scaler: null
+      clamp: null
+  # 5-s windows, non-overlapping (stride = duration), matching the paper's
+  # window length.
+  trigger_event_type: Emg2poseRecording
+  start: 0.0
+  duration: 5.0
+  stride: 5.0
+  stride_drop_incomplete: true
+  summary_columns: [user, stage, side]
+brain_model_output_size: &brain_model_output_size 20
+trainer_config:
+  monitor: val/mae
+  mode: min
+  strategy: auto
+  patience: 7
+  n_epochs: 40
+loss:
+  name: MSELoss
+metrics: !!python/object/apply:neuralbench.defaults.metrics.get_regression_metric_configs
+  - *brain_model_output_size

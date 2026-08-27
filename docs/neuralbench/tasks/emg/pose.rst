@@ -1,44 +1,81 @@
-EMG2Pose BIDS study
-===================
+Hand pose decoding
+==================
 
-| **Dataset**: :py:class:`~neuralset.studies.Emg2pose` (NEMAR NM000281)
-| **Modality**: 16-channel surface EMG with 20 joint-angle targets
-| **Status**: dataset integration; no default NeuralBench task yet
+| **Name**: pose
+| **Category**: motor / hand-pose decoding
+| **Dataset**: :py:class:`~neuralset.studies.Emg2pose` (NM000281, emg2pose)
+| **Objective**: :bdg-dark:`20-joint angle regression`
+| **Split**: Leave-users-out (cross-user)
 
-EMG2Pose is the NeurIPS 2024 hand-pose benchmark from Salter, Warren,
-Schlager et al. NEMAR NM000281 is its EMG-BIDS conversion. Each BDF recording
-contains ``emg0`` through ``emg15`` and ``joint0`` through ``joint19`` at
-2 kHz. Every recording supplies a BIDS ``channels.tsv`` sidecar: 16 ``EMG``
-channels in volts and 20 ``MISC`` joint-angle channels in radians. MNE-BIDS
-uses that metadata directly without study-specific numerical rescaling. The
-BDF encoder's physical header is ``uV`` for all 36 channels: EMG consequently
-arrives from MNE in volts, while the joint targets require an explicit
-``×1e6`` conversion in a paper-specific task to recover radians. That
-conversion is deliberately not hidden in the generic study reader.
+Usage
+~~~~~
 
-Why no default task configuration?
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+.. code-block:: bash
 
-The BIDS release exposes the source user, movement stage, hand side, source
-file, and valid sample count through ``participants.tsv`` and recording
-sidecars. The paper's exact train/validation/test and held-out
-user/stage/user-stage assignments remain defined by upstream ``metadata.csv``;
-they are not derivable exactly from those BIDS fields. A generic random split,
-plain MSE loss, or guessed target window would therefore be misleading.
+   # Auto-fetch NM000281 via eegdash
+   neuralbench emg pose -m eegnet --download
 
-The future official task must therefore consume a public structured split
-artifact and implement the paper's valid-sample and ``BAD_IK`` handling,
-5-second windows, tracking/regression rollout, paper-specific input
-preprocessing (including the BDF joint-angle scale), and per-user aggregation.
-Until then, :class:`~neuralset.studies.Emg2pose` is available for verified
-BIDS loading and replication preparation, but ``neuralbench emg pose`` is not
-advertised as a runnable benchmark.
+   # Local 2-epoch sanity check
+   neuralbench emg pose -m eegnet --debug
 
-Dataset access
-~~~~~~~~~~~~~~
+   # Full benchmark run
+   neuralbench emg pose -m eegnet
 
-The study uses :py:class:`neuralfetch.download.Eegdash`; Eegdash owns NEMAR
-metadata and transfer support through its own dependency on ``nemar-py``.
-NeuralFetch does not import ``nemar`` directly and therefore does not pin it.
-An existing Iceberg BIDS copy can be linked under
-``download/nm000281/`` below the study directory.
+.. dropdown:: Show ``config.yaml``
+
+   .. literalinclude:: ../../../../neuralbench-repo/neuralbench/tasks/emg/pose/config.yaml
+      :language: yaml
+
+Description
+~~~~~~~~~~~
+
+Hand-pose regression from 16-channel surface EMG (one wristband at 2 kHz)
+against the 20 joint angles of the UmeTrack hand skeleton, following
+[Salter2024]_.  Each 5-s window is mapped to the joint-angle vector at the
+window's right edge, so the readout is causal: pose at time *t* is predicted
+from the EMG that precedes it.  Targets are radians; the default metrics are
+RMSE, MAE, Pearson *r*, R², and normalized RMSE over the 20 outputs.
+
+As compared to the original paper, the NeuralBench default configuration
+predicts a single end-of-window pose rather than rolling a state-space
+tracker across the whole session, and splits users at random rather than
+reusing the paper's fixed held-out-user assignment, keeping turn-around
+tractable.  The paper's ``BAD_IK`` masking and per-user aggregation are not
+applied, so absolute errors are not directly comparable to the published
+tracking numbers.
+
+Dataset Notes
+~~~~~~~~~~~~~
+
+* **Auto-fetch**: ``--download`` pulls NM000281 from NEMAR via
+  :py:class:`neuralfetch.download.Eegdash`, under
+  ``<DATA_DIR>/Emg2pose/download/nm000281/sub-*/...``.  Eegdash owns NEMAR
+  metadata and transfer through its own ``nemar-py`` dependency, so
+  NeuralFetch neither imports nor pins ``nemar``.  Users with an existing
+  BIDS copy should symlink it into ``download/nm000281/``.
+* **BIDS-aware reader**: the Study reads via
+  :py:func:`mne_bids.read_raw_bids` (``>= 0.19``); channel types and units
+  come from the BIDS sidecars -- 16 ``EMG`` channels (``emg0``--``emg15``)
+  and 20 ``MISC`` joint channels (``joint0``--``joint19``) -- so the study
+  applies no numerical rescaling of its own.
+* **Joint-angle units**: the BDF physical header declares ``uV`` for all 36
+  channels, so EMG arrives from MNE in volts while the joint channels arrive
+  1e6 times too small.  The task config restores radians with
+  ``scale_factor: 1.0e+6`` on the target extractor.  This is a file-format
+  correction and is kept in the task rather than hidden in the generic study
+  reader.
+* **Splits and metadata**: ``participants.tsv`` and the recording sidecars
+  supply the source user, movement stage, hand side, source file, and valid
+  sample count.  The task splits on ``user``, and ``stage`` / ``side`` are
+  carried in ``summary_columns`` so per-stage and per-hand breakdowns are
+  available at aggregation time.
+* **Windowing**: 5-s windows with a 5-s stride, so windows tile each
+  recording without overlap; incomplete trailing windows are dropped.
+
+References
+~~~~~~~~~~
+
+.. [Salter2024] Salter, Sasha, et al. "emg2pose: A large and diverse
+   benchmark for surface electromyographic hand pose estimation."
+   *Advances in Neural Information Processing Systems* 37 (2024).
+   arXiv:2412.02725.
