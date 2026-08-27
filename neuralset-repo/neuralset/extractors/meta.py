@@ -399,7 +399,13 @@ class TimeMajorExtractor(base.BaseExtractor):
         duration: float,
         trigger: Event | pd.Series | dict | None = None,
     ) -> torch.Tensor:
-        return self.extractor(events, start, duration, trigger).transpose(-1, -2)
+        # ``.contiguous()``: the transposed view collates ~5x slower and is
+        # unsafe for a later ``.view()``.
+        return (
+            self.extractor(events, start, duration, trigger)
+            .transpose(-1, -2)
+            .contiguous()
+        )
 
 
 class CroppedExtractor(base.BaseStatic):  # can be static or not

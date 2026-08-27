@@ -64,7 +64,10 @@ Dataset Notes
   quantization does not preserve the exact zeros that test relies on.  Pass
   ``skip_ik_failures=False`` for one event per recording instead.
 * **Padding**: the BDF writer pads the final data record with edge values, so
-  every span is clipped to the ``scans.tsv`` duration.
+  every span is clipped to the ``scans.tsv`` duration.  A recording whose
+  session has no usable ``duration`` entry is rejected rather than bounded at
+  the padded file length, which would feed constant joint angles to the loss
+  as ground truth.
 * **Splits**: the paper's ``split`` and ``generalization`` assignments are not
   BIDS entities.  They are joined from the upstream ``emg2pose_metadata.csv``
   on the HDF5 name each sidecar preserves as ``SourceFile``.  The table ships

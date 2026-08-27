@@ -132,9 +132,16 @@ class Salter2024Emg2pose(study.Study):
             return
         target = self.path / "emg2pose_metadata.csv"
         target.parent.mkdir(parents=True, exist_ok=True)
+        # Download to a sibling temp file and rename: a truncation that lands
+        # after the CSV header would otherwise pass the column check and build
+        # the split map from a prefix, silently dropping every recording past
+        # the cut from train/val/test.
+        partial = target.with_suffix(".csv.partial")
         try:
-            urllib.request.urlretrieve(METADATA_URL, target)  # noqa: S310
+            urllib.request.urlretrieve(METADATA_URL, partial)  # noqa: S310
+            partial.replace(target)
         except (urllib.error.URLError, OSError) as exc:
+            partial.unlink(missing_ok=True)
             logger.warning("Could not fetch %s: %s", METADATA_URL, exc)
 
     def _existing_metadata_path(self) -> Path | None:
@@ -241,7 +248,14 @@ class Salter2024Emg2pose(study.Study):
         durations: dict[str, float] = {}
         for path in session_dir.glob("*_scans.tsv"):
             table = pd.read_csv(path, sep="\t")
-            if not {"filename", "duration"}.issubset(table.columns):
+            missing = {"filename", "duration"}.difference(table.columns)
+            if missing:
+                logger.warning(
+                    "%s has no %s column; recordings in this session have no "
+                    "un-padded length and will be rejected.",
+                    path,
+                    sorted(missing),
+                )
                 continue
             for name, duration in zip(table["filename"], table["duration"]):
                 if pd.notna(duration):
@@ -303,8 +317,17 @@ class Salter2024Emg2pose(study.Study):
         Spans are clipped to *valid_duration*: the BDF writer pads the last
         data record with edge values, so the file runs past the data.
         """
+        if valid_duration is None:
+            # Falling back to the file length would hand the BDF's edge-value
+            # padding to the loss as ground truth: constant joint angles, for
+            # up to a second per recording. Refuse instead.
+            raise ValueError(
+                f"No un-padded duration for {filepath}: its session's scans.tsv "
+                "has no usable 'duration' entry, and the BDF is padded with edge "
+                "values, so the recording cannot be safely bounded."
+            )
         raw = mne.io.read_raw_bdf(filepath, preload=False, verbose="ERROR")
-        limit = valid_duration if valid_duration is not None else raw.times[-1]
+        limit = valid_duration
         annotations = raw.annotations
         bad = [
             (float(onset), float(onset) + float(duration))
@@ -368,6 +391,11 @@ class Salter2024Emg2pose(study.Study):
         at segmentation time.
         """
         valid = timeline.get("duration")
+        if valid is None:
+            raise ValueError(
+                f"No un-padded duration for {filepath}; refusing to emit an event "
+                "that would extend into the BDF's edge-value padding."
+            )
         if self.skip_ik_failures:
             return list(self._ik_clean_spans(filepath, valid))
         return [(0.0, valid)]
