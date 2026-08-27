@@ -4,19 +4,10 @@
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
 
-# NeuroPose (Liu, Zhang & Gowda, WWW 2021) — the model emg2pose runs as its
-# ``regression_neuropose`` baseline.  ``NeuroPoseNet`` is braindecode's class
-# name for it, following the same convention as ``EMG2QwertyNet`` for the
-# paper's ``emg2qwerty``.  Pairs with emg/pose.
-#
-# ``n_bands: 16`` matches the emg2pose wristband (the original used an 8-channel
-# MyoBand).  ``internal_sfreq: 200`` is braindecode's porting choice: decimate
-# 2 kHz to the rate the original architecture was designed for, then use its
-# original pooling schedule.  emg2pose took the other route -- keep 2 kHz and
-# widen the featurizer/decoder sampling by 8x temporally and 2x spatially
-# (Section 3.5) -- so the receptive fields end up comparable (0.2 s here vs
-# 0.16 s upstream) but this variant sees no EMG content above 100 Hz.  Worth
-# revisiting before comparing against the published NeuroPose row.
+# NeuroPose (Liu, Zhang & Gowda, WWW 2021), emg2pose's regression baseline.
+# Note: this port decimates to ``internal_sfreq`` and uses NeuroPose's original
+# pooling schedule, where emg2pose instead keeps 2 kHz and widens the schedule
+# (Section 3.5), so this variant sees no EMG content above 100 Hz.
 brain_model_config:
   =replace=: true
   name: NeuroPoseNet

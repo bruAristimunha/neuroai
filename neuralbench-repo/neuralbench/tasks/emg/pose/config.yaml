@@ -4,25 +4,19 @@
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
 
-# emg/pose regression task: surface-EMG → hand joint angles (Emg2pose, NM000281).
-# Cross-user baseline: the paper's held-out-user condition, expressed as a
-# leave-subjects-out split over the BIDS ``user`` column that the study reads
-# from ``participants.tsv``.
+# emg/pose: surface-EMG -> hand joint-angle trajectories (Salter2024Emg2pose,
+# NEMAR NM000281), following the paper's regression setting.
 
 data:
   batch_size: 16
   study:
     source:
-      name: Emg2pose
+      name: Salter2024Emg2pose
     split:
-      # The paper's own train/val/test assignment, joined onto each recording
-      # from the upstream ``emg2pose_metadata.csv`` via the HDF5 name the BIDS
-      # sidecars preserve as ``SourceFile``.  ``valid_split_by: null`` keeps
-      # the published ``val`` rows instead of re-drawing a validation set out
-      # of train.  Test rows carry ``generalization`` in {user, stage,
-      # user_stage}, so per-condition numbers come out of the aggregation.
+      # ``valid_split_by: null`` keeps the paper's own validation
+      # recordings instead of re-drawing a validation set out of train.
       name: PredefinedSplit
-      event_type: Emg2poseRecording
+      event_type: BidsEmg
       test_split_query: null
       col_name: split
       valid_split_by: null
@@ -49,46 +43,30 @@ data:
       min_samples_per_job: 200
   target:
     =replace=: true
-    # The 20 joint angles are MISC channels in the same BDF as the EMG, so the
-    # target is the same reader restricted to those channels.  The paper
-    # regresses a whole trajectory, not a single pose, so this stays dense in
-    # time; ``TimeMajorExtractor`` puts it in (T, C) to match the backbone's
-    # per-frame output, because the loss flattens both to (batch, -1).
+    # The 20 joint angles are MISC channels in the same BDF as the EMG.
+    # Transposed to (T, C) to match the backbone's per-frame output, because
+    # the loss flattens both to (batch, -1).
     name: TimeMajorExtractor
     extractor:
       name: EmgExtractor
-      event_types: Emg
       picks: [misc]
       frequency: 2000.0
-      # Two corrections in one factor.  The BDF physical header declares
-      # ``uV`` for all 36 channels, so MNE returns the joint channels 1e6
-      # times too small; ``* 1e6`` restores radians.  ``* 180 / pi`` then
-      # converts to degrees, which is what the paper reports angular error in
-      # (Section 3.3), so ``val/mae`` is directly readable against Table 2.
+      # BDF stores joints with a uV physical header (x1e6 -> radians), then
+      # radians -> degrees, the unit the paper reports angular error in.
       scale_factor: 57295779.51308232
       filter: null
       notch_filter: null
       baseline: null
       scaler: null
       clamp: null
-  # The paper evaluates 5-s trajectories (10,000 samples at 2 kHz).  Windows
-  # tile each event without overlap; a span shorter than one window is dropped.
-  # Events are the contiguous runs of resolved inverse kinematics, so no window
-  # spans an IK failure -- nor the zero padding that brings every BDF up to a
-  # whole number of one-second records, which the same all-zero test catches.
-  trigger_event_type: Emg2poseRecording
+  # 5-s trajectories, the paper's evaluation length.
+  trigger_event_type: BidsEmg
   start: 0.0
   duration: 5.0
   stride: 5.0
   stride_drop_incomplete: true
   summary_columns: [user, stage, side, generalization]
 brain_model_output_size: &brain_model_output_size 20
-# The paper's regression setting is a plain sequence-to-sequence map --
-# ``PoseModule._predict_pose`` is ``pred = self.network(emg)``, with no state
-# conditioning and no initial pose (``regression_neuropose.yaml``).  The
-# default backbone is therefore a dense per-frame regressor; models that do not
-# override ``brain_model_config`` inherit it rather than the global EEGNet
-# default, whose single-vector output cannot express a trajectory.
 brain_model_config:
   =replace=: true
   name: NeuroPoseNet

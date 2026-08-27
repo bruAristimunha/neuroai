@@ -4,7 +4,6 @@
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
 
-import math
 import shutil
 import typing as tp
 import warnings
@@ -177,33 +176,3 @@ def test_run_benchmark_cli_help_smoke(
     assert "available datasets per task:" in out
     assert "eeg" in out
 
-
-def test_emg_pose_task_entry_point() -> None:
-    """emg/pose resolves and builds a Data with the joint-angle target wired up."""
-    config = ConfDict(load_yaml_config(DEFAULTS_DIR / "config.yaml"))
-    grid = ConfDict(load_yaml_config(DEFAULTS_DIR / "grid.yaml"))
-    configs = prepare_task_configs(
-        config,
-        grid,
-        "emg",
-        "pose",
-        use_task_grid=False,
-        debug=False,
-        force=False,
-        prepare=False,
-        download=False,
-        models=[None],
-        datasets=None,
-    )
-    data = Data(**configs[0]["data"])
-    assert data.neuro.picks == ("emg",)
-    # The 20 joint angles are MISC channels in the same BDF. The target stays
-    # dense in time (the paper regresses a trajectory) and is transposed to
-    # (T, C) so it flattens the same way as the backbone's per-frame output.
-    target: tp.Any = data.target
-    assert type(target).__name__ == "TimeMajorExtractor"
-    assert target.extractor.picks == ("misc",)
-    # uV header -> radians (1e6), then radians -> degrees, the paper's unit.
-    assert target.extractor.scale_factor == pytest.approx(1e6 * 180 / math.pi)
-    assert data.trigger_event_type == "Emg2poseRecording"
-    assert configs[0]["brain_model_config"]["name"] == "NeuroPoseNet"

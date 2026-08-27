@@ -16,7 +16,10 @@ import pandas as pd
 import pydantic
 
 from neuralfetch import download
-from neuralset.events import etypes, study
+# Imported for its side effect: registers the ``BidsEmg`` event type this
+# study emits. Same reader, same BIDS conventions as emg2qwerty.
+from neuralfetch.studies.sivakumar2024emg2qwerty import BidsEmg  # noqa: F401
+from neuralset.events import study
 
 logger = logging.getLogger(__name__)
 
@@ -87,40 +90,42 @@ def _complement(
     return _clip(good, limit)
 
 
-class Emg2poseRecording(etypes.Emg):
-    """One EMG2Pose BIDS recording."""
-
-    def _read(self) -> tp.Any:
-        bids_path = mne_bids.get_bids_path_from_fname(self.filepath)
-        return mne_bids.read_raw_bids(bids_path, verbose=False)
-
-
-class Emg2pose(study.Study):
-    """EMG2Pose hand-pose regression data published on NEMAR.
-
-    BDF files and BIDS sidecars are the source of truth. No paper-specific
-    checkpoint or recording manifest is embedded in this study.
-
-    The paper's ``split`` / ``generalization`` assignments are not encoded in
-    BIDS entities, but the release keeps each recording's upstream HDF5 name
-    (``SourceFile`` in the sidecar), which is the key of the published
-    ``emg2pose_metadata.csv``. When that table is available the split columns
-    are joined onto every recording; when it is not, they are simply absent
-    and the study stays usable BIDS-only.
+class Salter2024Emg2pose(study.Study):
+    """emg2pose (Meta Reality Labs, NeurIPS 2024) -- surface-EMG hand pose.
 
     Parameters
     ----------
     split_metadata : Path, optional
-        Explicit path to ``emg2pose_metadata.csv``. Defaults to the copy
-        shipped inside the release at ``sourcedata/emg2pose_metadata.csv``;
-        a standalone copy (~5 MiB) is published at :data:`METADATA_URL`.
+        Explicit path to ``emg2pose_metadata.csv``, which carries the paper's
+        train/val/test and generalization assignments. Defaults to the copy
+        shipped in the release at ``sourcedata/emg2pose_metadata.csv``; a
+        standalone copy is published at :data:`METADATA_URL`. Without it the
+        split columns are simply absent.
     skip_ik_failures : bool
         Emit one event per contiguous span of frames whose inverse-kinematics
-        labels resolved, instead of one event per recording. Matches the
-        upstream ``skip_ik_failures`` datamodule default, which is ``True``
-        for train and validation/test alike. Costs one pass over each
-        recording's joint channels when the events are first built.
+        labels resolved, rather than one per recording. Matches the upstream
+        datamodule default.
     """
+
+    bibtex: tp.ClassVar[str] = """
+    @inproceedings{salter2024emg2pose,
+        author = {Salter, Sasha and Warren, Richard and Schlager, Collin and
+                  Spurr, Adrian and Han, Shangchen and Bhasin, Rohin and
+                  Cai, Yujun and Walkington, Peter and Bolarinwa, Anuoluwapo and
+                  Wang, Robert and Danielson, Nathan and Merel, Josh and
+                  Pnevmatikakis, Eftychios and Marshall, Jesse},
+        title = {emg2pose: A Large and Diverse Benchmark for Surface
+                 Electromyographic Hand Pose Estimation},
+        booktitle = {Advances in Neural Information Processing Systems},
+        volume = {37},
+        year = {2024},
+        url = {https://arxiv.org/abs/2412.02725},
+    }
+    """
+    description: tp.ClassVar[str] = (
+        "193 subjects performing 29 hand-movement stages with a 16-channel EMG "
+        "wristband, paired with motion-capture joint angles."
+    )
 
     NEMAR_DATASET_ID: tp.ClassVar[str] = "nm000281"
     aliases: tp.ClassVar[tuple[str, ...]] = ("emg2pose", "nm000281")
@@ -250,10 +255,11 @@ class Emg2pose(study.Study):
     def _scan_durations(self, session_dir: Path) -> dict[str, float]:
         """Un-padded recording durations from a session's ``scans.tsv``.
 
-        ``ValidSamples`` is absent from a minority of sidecars (2,785 of
-        25,253 in NM000281), but ``scans.tsv`` covers every recording and
-        agrees exactly with ``ValidSamples / SamplingFrequency`` wherever both
-        are present, so it is the fallback for bounding an event.
+        The BDF writer pads the final data record with edge values, so the
+        file runs past the data and the event has to be bounded explicitly.
+        ``scans.tsv`` covers every recording and agrees exactly with the
+        sidecar's ``ValidSamples / SamplingFrequency`` wherever both are
+        present (22,468 of 25,253; the rest have no ``ValidSamples``).
         """
         if session_dir in self._scans_cache:
             return self._scans_cache[session_dir]
@@ -291,9 +297,7 @@ class Emg2pose(study.Study):
                 "stage": stage,
                 "side": sidecar.get("HandSide", bids_path.recording),
                 "source_file": source_file,
-                "valid_samples": sidecar.get("ValidSamples"),
-                "sampling_frequency": sidecar.get("SamplingFrequency"),
-                "scan_duration": self._scan_durations(bids_path.fpath.parent.parent).get(
+                "duration": self._scan_durations(bids_path.fpath.parent.parent).get(
                     bids_path.fpath.name
                 ),
             }
@@ -382,14 +386,13 @@ class Emg2pose(study.Study):
         yield_rows: list[dict[str, tp.Any]] = []
         filepath = str(matches[0].fpath)
         base = {
-            "type": "Emg2poseRecording",
+            "type": "BidsEmg",
             "filepath": filepath,
             "subject": timeline["subject"],
             "user": timeline["user"],
             "stage": timeline["stage"],
             "side": timeline["side"],
             "source_file": timeline["source_file"],
-            "valid_samples": timeline["valid_samples"],
             "user_stage": timeline["user_stage"],
         }
         for column in _SPLIT_COLUMNS:
@@ -414,34 +417,7 @@ class Emg2pose(study.Study):
         not know the window length, and ``stride_drop_incomplete`` drops them
         at segmentation time.
         """
-        valid = self._valid_duration(timeline)
+        valid = timeline.get("duration")
         if self.skip_ik_failures:
             return list(self._ik_clean_spans(filepath, valid))
         return [(0.0, valid)]
-
-    @staticmethod
-    def _valid_duration(timeline: dict[str, tp.Any]) -> float | None:
-        """Duration of the un-padded region of a recording, in seconds.
-
-        Every BDF in the release is zero-padded up to a whole number of
-        one-second records, so the file is longer than the data. The sidecar
-        records how much of it is real (``ValidSamples``); bounding the event
-        there keeps sliding windows off the padded tail. Where that field is
-        missing, the session's ``scans.tsv`` duration says the same thing.
-        Returns ``None`` when neither is available, leaving the duration to be
-        auto-filled from the file as before.
-        """
-        samples = timeline.get("valid_samples")
-        frequency = timeline.get("sampling_frequency")
-        if (
-            samples is not None
-            and frequency is not None
-            and not pd.isna(samples)
-            and not pd.isna(frequency)
-            and float(frequency) > 0
-        ):
-            return float(samples) / float(frequency)
-        scanned = timeline.get("scan_duration")
-        if scanned is None or pd.isna(scanned) or float(scanned) <= 0:
-            return None
-        return float(scanned)
