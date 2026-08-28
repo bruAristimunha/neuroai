@@ -175,3 +175,28 @@ def test_run_benchmark_cli_help_smoke(
     out = capsys.readouterr().out
     assert "available datasets per task:" in out
     assert "eeg" in out
+
+
+def test_emg_pose_task_uses_degree_targets() -> None:
+    """The BDF's mislabeled joint channels are corrected before loss/metrics."""
+    config = ConfDict(load_yaml_config(DEFAULTS_DIR / "config.yaml"))
+    grid = ConfDict(load_yaml_config(DEFAULTS_DIR / "grid.yaml"))
+    configs = prepare_task_configs(
+        config,
+        grid,
+        "emg",
+        "pose",
+        use_task_grid=False,
+        debug=False,
+        force=False,
+        prepare=False,
+        download=False,
+        models=[None],
+        datasets=None,
+    )
+    data = Data(**configs[0]["data"])
+    target: tp.Any = data.target
+
+    assert target.extractor.scale_factor * 1e-6 == pytest.approx(
+        180.0 / 3.141592653589793
+    )

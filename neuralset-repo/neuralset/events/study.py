@@ -547,6 +547,8 @@ class Study(patterns.Scatter, base.Step):  # type: ignore[misc]
         if "subject" not in timeline:
             raise RuntimeError("timeline dict must contain 'subject' key")
         out = self._load_timeline_events(timeline)
+        if out.empty:
+            return out
         # Core columns are always overwritten
         out.loc[:, "subject"] = f"{cls_name}/{timeline['subject']}"
         out.loc[:, "timeline"] = self._to_timeline_string(timeline)
@@ -632,7 +634,10 @@ class Study(patterns.Scatter, base.Step):  # type: ignore[misc]
 
     def gather(self, results: list[patterns.BranchResult]) -> pd.DataFrame:
         """Concatenated per-timeline events."""
-        out = pd.concat([r.result for r in results]).reset_index(drop=True)
+        frames = [r.result for r in results if not r.result.empty]
+        if not frames:
+            raise RuntimeError(f"{type(self).__name__} produced no events")
+        out = pd.concat(frames).reset_index(drop=True)
         return utils.standardize_events(out, auto_fill=False)
 
     def build(self) -> pd.DataFrame:

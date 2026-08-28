@@ -17,13 +17,10 @@ Usage
 
 .. code-block:: bash
 
-   # Auto-fetch NM000281 via eegdash
+   # Download the NM000281 release
    neuralbench emg pose -m neuropose --download
 
-   # Local 2-epoch sanity check
-   neuralbench emg pose -m neuropose --debug
-
-   # Full benchmark run
+   # Full paper configuration
    neuralbench emg pose -m neuropose
 
 .. dropdown:: Show ``config.yaml``
@@ -37,8 +34,8 @@ Description
 Hand-pose regression from 16-channel surface EMG against the 20 joint angles
 of the UmeTrack hand skeleton [Salter2024]_: 25,253 recordings over 193
 participants, 370 hours and 29 movement stages, with 2 kHz sEMG paired with
-tracked joint angles.  Each 5-s window is mapped to the joint-angle
-trajectory over that window.
+tracked joint angles. Each 5-s window is mapped to the 20-joint trajectory
+in degrees, the unit used for the paper's reported angular error.
 
 This is the paper's **regression** setting (``regression_neuropose``), a plain
 sequence-to-sequence map.  Its **tracking** setting is not implemented: that
@@ -48,26 +45,15 @@ step, which is a model-side change rather than a configuration one.
 Dataset Notes
 ~~~~~~~~~~~~~
 
-* **IK failures**: the inverse-kinematics solver failed on 12.7% of frames.
-  NM000281 marks them with ``BAD_IK`` annotations, and the study emits one
-  event per contiguous resolved run so no window straddles a failure --
-  matching upstream's ``skip_ik_failures``, its datamodule default.  The
-  annotations are the only usable source: over 60 sampled recordings,
-  upstream's all-zero test on the BDF joint samples agreed with them 87% of
-  the time on average and as little as 32%, usually reporting no failures at
-  all where the annotations mark 15% of the recording, because BDF
-  quantization does not preserve the exact zeros that test relies on.
-* **Padding**: the BDF writer pads the final data record with edge values, so
-  every span is clipped to the ``scans.tsv`` duration.  A recording whose
-  session has no usable ``duration`` entry is rejected rather than bounded at
-  the padded file length, which would feed constant joint angles to the loss
-  as ground truth.
+* **IK failures and padding**: ``BAD_IK`` BDF annotations split a recording
+  into resolved-label spans, and ``scans.tsv`` clips the padded BDF tail. A
+  recording without an unpadded duration is rejected.
 * **Splits**: the paper's ``split`` and ``generalization`` assignments are not
   BIDS entities.  They are joined from the upstream ``emg2pose_metadata.csv``
-  on the HDF5 name each sidecar preserves as ``SourceFile``.  The table ships
-  in the release under ``sourcedata/``; ``--download`` otherwise fetches the
-  standalone copy.  Without it the split columns are absent and the task
-  fails at split time rather than inventing a split.
+  on the HDF5 name each sidecar preserves as ``SourceFile``. The required
+  ``sourcedata/emg2pose_metadata.csv`` must be materialized locally; there is
+  no metadata fallback.
+
 .. warning::
 
    emg2pose is released under CC-BY-NC-SA-4.0, and the UmeTrack hand model

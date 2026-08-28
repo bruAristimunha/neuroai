@@ -24,6 +24,7 @@ from .meta import (
     CroppedExtractor,
     ExtractorPCA,
     TimeAggregatedExtractor,
+    TimeMajorExtractor,
 )
 from .neuro import (
     DYNAMIC_ROIS,

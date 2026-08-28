@@ -1,3 +1,9 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+# All rights reserved.
+#
+# This source code is licensed under the license found in the
+# LICENSE file in the root directory of this source tree.
+
 """NM000281 (Meta emg2pose) -- surface-EMG hand-pose recordings."""
 
 from __future__ import annotations
@@ -28,8 +34,8 @@ class Salter2024Emg2pose(study.Study):
     Notes
     -----
     The paper's train/val/test and generalization assignments are read from
-    ``sourcedata/emg2pose_metadata.csv``, which the release ships. Without it
-    the split columns are absent.
+    ``sourcedata/emg2pose_metadata.csv``, which must be materialized from the
+    release before running the task.
 
     Events are emitted one per contiguous span of frames whose
     inverse-kinematics labels resolved, matching upstream's
@@ -54,6 +60,8 @@ class Salter2024Emg2pose(study.Study):
         url = {https://arxiv.org/abs/2412.02725},
     }
     """
+    url: tp.ClassVar[str] = "https://nemar.org/dataexplorer/detail?dataset_id=NM000281"
+    licence: tp.ClassVar[str] = "CC-BY-NC-SA-4.0"
     description: tp.ClassVar[str] = (
         "193 subjects performing staged hand movements with an EMG wristband, "
         "paired with tracked hand-joint angles."
@@ -69,13 +77,10 @@ class Salter2024Emg2pose(study.Study):
     )
 
     NEMAR_DATASET_ID: tp.ClassVar[str] = "nm000281"
-    #: Columns of ``emg2pose_metadata.csv`` that the BIDS conversion drops.
+    #: Paper split fields not represented by BIDS entities or sidecars.
     SPLIT_COLUMNS: tp.ClassVar[tuple[str, ...]] = (
         "split",
         "generalization",
-        "moving_hand",
-        "held_out_user",
-        "held_out_stage",
     )
     aliases: tp.ClassVar[tuple[str, ...]] = ("emg2pose", "nm000281")
     _bids_root_cache: Path | None = pydantic.PrivateAttr(default=None)
@@ -135,40 +140,43 @@ class Salter2024Emg2pose(study.Study):
     def recording_splits(self) -> dict[str, dict[str, tp.Any]]:
         """Map upstream HDF5 stems to the paper's split assignment.
 
-        Read from ``sourcedata/emg2pose_metadata.csv``, which the release
-        ships: ``split`` and ``generalization`` are not BIDS entities and so
-        do not survive the conversion. Returns an empty mapping (and warns
-        once) when the table is absent, so a BIDS-only tree still loads and
-        ``PredefinedSplit`` fails at split time instead.
+        ``split`` and ``generalization`` are not BIDS entities, so they are
+        joined from the release's required ``sourcedata`` table.
         """
         if self._split_metadata_cache is not None:
             return self._split_metadata_cache
         path = self.bids_root / "sourcedata" / "emg2pose_metadata.csv"
-        try:
-            table = pd.read_csv(path)
-            splits = {
-                str(row["filename"]): {
-                    column: row[column] for column in self.SPLIT_COLUMNS
-                }
-                for _, row in table.iterrows()
-            }
-        except (OSError, ValueError, KeyError):
-            LOGGER.warning(
-                "No usable %s; the paper's split and generalization columns "
-                "will be absent.",
-                path,
+        table = pd.read_csv(path)
+        required = {"filename", *self.SPLIT_COLUMNS}
+        missing = required.difference(table.columns)
+        if missing:
+            raise ValueError(
+                f"{path} is not the materialized EMG2Pose metadata table; "
+                f"missing {sorted(missing)}. Materialize the release's "
+                "sourcedata/ contents before running the paper split."
             )
-            splits = {}
+        splits = {
+            str(row["filename"]): {column: row[column] for column in self.SPLIT_COLUMNS}
+            for _, row in table.iterrows()
+        }
+        if not splits:
+            raise ValueError(f"{path} contains no EMG2Pose split assignments")
         self._split_metadata_cache = splits
-        return self._split_metadata_cache
+        return splits
 
     def _splits_for(self, source_file: tp.Any) -> dict[str, tp.Any]:
         """Look up the split row for a recording's upstream HDF5 name."""
         splits = self.recording_splits
-        if not splits or source_file is None or pd.isna(source_file):
-            return {}
+        if source_file is None or pd.isna(source_file):
+            raise ValueError("BIDS sidecar has no SourceFile for paper split lookup")
         # ``metadata.csv`` keys on the stem; the sidecar keeps the ``.hdf5``.
-        return splits.get(Path(str(source_file)).stem, {})
+        source_stem = Path(str(source_file)).stem
+        try:
+            return splits[source_stem]
+        except KeyError as error:
+            raise ValueError(
+                f"No EMG2Pose split assignment for BIDS SourceFile {source_file!r}"
+            ) from error
 
     def _scan_durations(self, session_dir: Path) -> dict[str, float]:
         """Un-padded recording durations from a session's ``scans.tsv``."""
@@ -205,24 +213,18 @@ class Salter2024Emg2pose(study.Study):
             user = self.participant_users.get(subject, subject)
             stage = sidecar.get("Stage")
             source_file = sidecar.get("SourceFile")
-            timeline = {
+            values = {
                 "subject": bids_path.subject,
                 "session": bids_path.session,
                 "task": bids_path.task,
                 "run": bids_path.run,
                 "recording": bids_path.recording,
+                "path": str(bids_path.fpath),
                 "user": user,
                 "stage": stage,
-                "side": sidecar.get("HandSide", bids_path.recording),
-                "source_file": source_file,
-                # Not "duration": neuralset merges timeline keys into the
-                # events frame, where "duration" is the event's own span and
-                # would collide. This is the recording's un-padded length,
-                # used only to bound those spans.
-                "valid_duration": self._scan_durations(bids_path.fpath.parent.parent).get(
-                    bids_path.fpath.name
-                ),
+                "side": sidecar.get("HandSide") or bids_path.recording,
             }
+            timeline = {key: value for key, value in values.items() if value is not None}
             timeline["user_stage"] = f"{user}/{stage}" if stage else user
             timeline.update(self._splits_for(source_file))
             yield timeline
@@ -277,41 +279,18 @@ class Salter2024Emg2pose(study.Study):
         return [(start, duration) for start, duration in spans if duration > 0]
 
     def _load_timeline_events(self, timeline: dict[str, tp.Any]) -> pd.DataFrame:
-        matches = mne_bids.find_matching_paths(
-            root=self.bids_root,
-            subjects=timeline["subject"],
-            sessions=timeline["session"],
-            tasks=timeline["task"],
-            runs=timeline["run"],
-            recordings=timeline["recording"],
-            datatypes="emg",
-            extensions=".bdf",
-        )
-        if len(matches) != 1:
-            raise ValueError(
-                f"Expected one BDF for BIDS timeline {timeline}, got {len(matches)}"
-            )
         yield_rows: list[dict[str, tp.Any]] = []
-        filepath = str(matches[0].fpath)
+        filepath = timeline["path"]
         base = {
             "type": "BidsEmg",
             "filepath": filepath,
-            # Only per-event fields belong here. neuralset copies every other
-            # timeline key onto the events frame itself, and a column set in
-            # both places warns today and raises tomorrow.
-            "subject": timeline["subject"],
         }
 
-        for start, duration in self._event_spans(timeline, filepath):
-            span = dict(base, start=start)
-            if duration is not None:
-                span["duration"] = duration
-            yield_rows.append(span)
+        for start, duration in self._event_spans(filepath):
+            yield_rows.append(dict(base, start=start, duration=duration))
         return pd.DataFrame(yield_rows)
 
-    def _event_spans(
-        self, timeline: dict[str, tp.Any], filepath: str
-    ) -> list[tuple[float, float | None]]:
+    def _event_spans(self, filepath: str) -> list[tuple[float, float]]:
         """Spans of a recording to emit as events.
 
         One span per contiguous run of resolved IK frames.
@@ -319,7 +298,8 @@ class Salter2024Emg2pose(study.Study):
         not know the window length, and ``stride_drop_incomplete`` drops them
         at segmentation time.
         """
-        valid = timeline.get("valid_duration")
+        path = Path(filepath)
+        valid = self._scan_durations(path.parent.parent).get(path.name)
         if valid is None:
             raise ValueError(
                 f"No un-padded duration for {filepath}; refusing to emit an event "
