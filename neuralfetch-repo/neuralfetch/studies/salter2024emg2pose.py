@@ -403,16 +403,11 @@ class Salter2024Emg2pose(study.Study):
         base = {
             "type": "BidsEmg",
             "filepath": filepath,
+            # Only per-event fields belong here. neuralset copies every other
+            # timeline key onto the events frame itself, and a column set in
+            # both places warns today and raises tomorrow.
             "subject": timeline["subject"],
-            "user": timeline["user"],
-            "stage": timeline["stage"],
-            "side": timeline["side"],
-            "source_file": timeline["source_file"],
-            "user_stage": timeline["user_stage"],
         }
-        for column in _SPLIT_COLUMNS:
-            if column in timeline:
-                base[column] = timeline[column]
 
         for start, duration in self._event_spans(timeline, filepath):
             span = dict(base, start=start)
