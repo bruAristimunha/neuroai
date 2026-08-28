@@ -65,6 +65,19 @@ def _complement(
     return _clip(good, limit)
 
 
+def _has_split_columns(path: Path) -> bool:
+    """``True`` if *path* parses as the upstream metadata table.
+
+    Reads the header alone, so an unfetched git-annex pointer or a truncated
+    download is rejected cheaply rather than being mistaken for the table.
+    """
+    try:
+        header = pd.read_csv(path, nrows=0)
+    except (OSError, ValueError, pd.errors.ParserError):
+        return False
+    return not {"filename", *_SPLIT_COLUMNS}.difference(header.columns)
+
+
 class Salter2024Emg2pose(study.Study):
     """emg2pose (Meta Reality Labs, NeurIPS 2024) -- surface-EMG hand pose.
 
@@ -144,14 +157,31 @@ class Salter2024Emg2pose(study.Study):
             logger.warning("Could not fetch %s: %s", METADATA_URL, exc)
 
     def _existing_metadata_path(self) -> Path | None:
-        """First metadata table found among the supported locations."""
-        candidates = []
+        """First *usable* metadata table among the supported locations.
+
+        Existence is not enough. NEMAR ships the release through git-annex,
+        and a tree cloned without fetching its annexed content leaves
+        ``sourcedata/emg2pose_metadata.csv`` as a one-line pointer to
+        ``/annex/objects/...``. Taking the first path that merely exists lets
+        that placeholder shadow a perfectly good copy alongside it, and the
+        failure then surfaces as a confusing missing-columns error. Candidates
+        are checked and skipped instead.
+        """
         if self.split_metadata is not None:
-            candidates.append(Path(self.split_metadata))
+            candidates = [Path(self.split_metadata)]
         else:
-            candidates.append(self.bids_root / "sourcedata" / "emg2pose_metadata.csv")
-            candidates.append(self.path / "emg2pose_metadata.csv")
-        return next((c for c in candidates if c.is_file()), None)
+            candidates = [
+                self.bids_root / "sourcedata" / "emg2pose_metadata.csv",
+                self.path / "emg2pose_metadata.csv",
+            ]
+        usable = [c for c in candidates if c.is_file() and _has_split_columns(c)]
+        if usable:
+            return usable[0]
+        # An explicit split_metadata= is the user's own choice: hand it back so
+        # recording_splits raises with the precise column list.
+        if self.split_metadata is not None and candidates[0].is_file():
+            return candidates[0]
+        return None
 
     @property
     def bids_root(self) -> Path:
