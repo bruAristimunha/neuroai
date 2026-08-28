@@ -9,9 +9,9 @@
 from __future__ import annotations
 
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
+from exca.steps.patterns import BranchResult
 
 from neuralfetch.studies.salter2024emg2pose import Salter2024Emg2pose
 
@@ -116,4 +116,4 @@ def test_a_fully_failed_recording_is_skipped(
 
     assert events.empty
     with pytest.raises(RuntimeError, match="Salter2024Emg2pose produced no events"):
-        study.gather([SimpleNamespace(result=events)])
+        study.gather([BranchResult(branch=timeline, result=events)])
