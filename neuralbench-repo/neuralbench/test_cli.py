@@ -175,4 +175,3 @@ def test_run_benchmark_cli_help_smoke(
     out = capsys.readouterr().out
     assert "available datasets per task:" in out
     assert "eeg" in out
-
