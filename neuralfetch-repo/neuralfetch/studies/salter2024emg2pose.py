@@ -115,6 +115,15 @@ class Salter2024Emg2pose(study.Study):
         "wristband, paired with motion-capture joint angles."
     )
 
+    _info: tp.ClassVar[study.StudyInfo] = study.StudyInfo(
+        num_timelines=25253,
+        num_subjects=193,
+        num_events_in_query=16,
+        event_types_in_query={"BidsEmg"},
+        data_shape=(16, 3267),
+        frequency=2000,
+    )
+
     NEMAR_DATASET_ID: tp.ClassVar[str] = "nm000281"
     aliases: tp.ClassVar[tuple[str, ...]] = ("emg2pose", "nm000281")
     split_metadata: Path | None = None
