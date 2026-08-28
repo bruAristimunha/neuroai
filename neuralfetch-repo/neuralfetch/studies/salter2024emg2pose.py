@@ -81,18 +81,19 @@ def _has_split_columns(path: Path) -> bool:
 class Salter2024Emg2pose(study.Study):
     """emg2pose (Meta Reality Labs, NeurIPS 2024) -- surface-EMG hand pose.
 
-    Parameters
-    ----------
-    split_metadata : Path, optional
-        Explicit path to ``emg2pose_metadata.csv``, which carries the paper's
-        train/val/test and generalization assignments. Defaults to the copy
-        shipped in the release at ``sourcedata/emg2pose_metadata.csv``; a
-        standalone copy is published at :data:`METADATA_URL`. Without it the
-        split columns are simply absent.
-    skip_ik_failures : bool
-        Emit one event per contiguous span of frames whose inverse-kinematics
-        labels resolved, rather than one per recording. Matches the upstream
-        datamodule default.
+    Notes
+    -----
+    The paper's train/val/test and generalization assignments live in
+    ``emg2pose_metadata.csv``, read from ``sourcedata/`` in the release, or
+    from a copy at the study path that ``download()`` fetches from
+    :data:`METADATA_URL`. Without it the split columns are absent.
+
+    Events are emitted one per contiguous span of frames whose
+    inverse-kinematics labels resolved, matching upstream's
+    ``skip_ik_failures`` datamodule default. This is not configurable:
+    neuralset rejects any study carrying non-default constructor fields
+    ("Class parameters are not yet supported"), so such a knob would raise
+    the moment it was set.
     """
 
     bibtex: tp.ClassVar[str] = """
@@ -126,8 +127,6 @@ class Salter2024Emg2pose(study.Study):
 
     NEMAR_DATASET_ID: tp.ClassVar[str] = "nm000281"
     aliases: tp.ClassVar[tuple[str, ...]] = ("emg2pose", "nm000281")
-    split_metadata: Path | None = None
-    skip_ik_failures: bool = True
     _bids_root_cache: Path | None = pydantic.PrivateAttr(default=None)
     _participant_users_cache: dict[str, str] | None = pydantic.PrivateAttr(default=None)
     _split_metadata_cache: dict[str, dict[str, tp.Any]] | None = pydantic.PrivateAttr(
@@ -176,21 +175,11 @@ class Salter2024Emg2pose(study.Study):
         failure then surfaces as a confusing missing-columns error. Candidates
         are checked and skipped instead.
         """
-        if self.split_metadata is not None:
-            candidates = [Path(self.split_metadata)]
-        else:
-            candidates = [
-                self.bids_root / "sourcedata" / "emg2pose_metadata.csv",
-                self.path / "emg2pose_metadata.csv",
-            ]
-        usable = [c for c in candidates if c.is_file() and _has_split_columns(c)]
-        if usable:
-            return usable[0]
-        # An explicit split_metadata= is the user's own choice: hand it back so
-        # recording_splits raises with the precise column list.
-        if self.split_metadata is not None and candidates[0].is_file():
-            return candidates[0]
-        return None
+        candidates = [
+            self.bids_root / "sourcedata" / "emg2pose_metadata.csv",
+            self.path / "emg2pose_metadata.csv",
+        ]
+        return next((c for c in candidates if _has_split_columns(c)), None)
 
     @property
     def bids_root(self) -> Path:
@@ -243,9 +232,9 @@ class Salter2024Emg2pose(study.Study):
         path = self._existing_metadata_path()
         if path is None:
             logger.warning(
-                "No emg2pose metadata table found under %s; the paper's split and "
-                "generalization columns will be absent. Fetch it from %s or pass "
-                "split_metadata=.",
+                "No usable emg2pose metadata table under %s; the paper's split and "
+                "generalization columns will be absent. Fetch it from %s and place "
+                "it there, or run download().",
                 self.path,
                 METADATA_URL,
             )
@@ -421,8 +410,7 @@ class Salter2024Emg2pose(study.Study):
     ) -> list[tuple[float, float | None]]:
         """Spans of a recording to emit as events.
 
-        With ``skip_ik_failures`` this is one span per contiguous run of
-        resolved IK frames; otherwise it is the single un-padded region.
+        One span per contiguous run of resolved IK frames.
         Spans shorter than a window are not filtered here -- the study does
         not know the window length, and ``stride_drop_incomplete`` drops them
         at segmentation time.
@@ -433,6 +421,4 @@ class Salter2024Emg2pose(study.Study):
                 f"No un-padded duration for {filepath}; refusing to emit an event "
                 "that would extend into the BDF's edge-value padding."
             )
-        if self.skip_ik_failures:
-            return list(self._ik_clean_spans(filepath, valid))
-        return [(0.0, valid)]
+        return list(self._ik_clean_spans(filepath, valid))

@@ -8,7 +8,11 @@ from __future__ import annotations
 
 import pytest
 
-from neuralfetch.studies.salter2024emg2pose import _complement, _has_split_columns
+from neuralfetch.studies.salter2024emg2pose import (
+    Salter2024Emg2pose,
+    _complement,
+    _has_split_columns,
+)
 
 
 @pytest.mark.parametrize(
@@ -49,3 +53,19 @@ def test_annex_pointer_is_not_mistaken_for_the_metadata_table(tmp_path):
         "2022-01-01-abc,train,user,left,False,False\n"
     )
     assert _has_split_columns(real)
+
+
+def test_study_declares_no_extra_constructor_fields():
+    """The study must not add constructor fields of its own.
+
+    neuralset's ``_cls_kwargs`` raises "Class parameters are not yet
+    supported" for any field left after the standard ones are dropped, so an
+    extra knob is not merely unused -- it raises the moment a caller sets it,
+    which is worse than not offering it.
+    """
+    standard = {"infra", "timelines", "version", "path", "name", "query"}
+    extra = set(Salter2024Emg2pose.model_fields) - standard
+    assert not extra, f"these would raise if ever set: {sorted(extra)}"
+
+    # And the contract that makes it true.
+    Salter2024Emg2pose(path="/tmp/does-not-exist")._cls_kwargs()
