@@ -37,9 +37,8 @@ Description
 Hand-pose regression from 16-channel surface EMG against the 20 joint angles
 of the UmeTrack hand skeleton [Salter2024]_: 25,253 recordings over 193
 participants, 370 hours and 29 movement stages, with 2 kHz sEMG paired with
-motion-capture joint angles.  Each 5-s window is mapped to the joint-angle
-trajectory over that window, in **degrees** -- the unit the paper reports
-angular error in, so ``val/mae`` reads directly against its tables.
+tracked joint angles.  Each 5-s window is mapped to the joint-angle
+trajectory over that window.
 
 This is the paper's **regression** setting (``regression_neuropose``), a plain
 sequence-to-sequence map.  Its **tracking** setting is not implemented: that
@@ -49,10 +48,6 @@ step, which is a model-side change rather than a configuration one.
 Dataset Notes
 ~~~~~~~~~~~~~
 
-* **Joint-angle units**: the BDF physical header declares ``uV`` for all 36
-  channels, so MNE returns the 20 ``MISC`` joint channels 1e6 times too
-  small.  The target's ``scale_factor`` restores radians and converts to
-  degrees in one step.
 * **IK failures**: the inverse-kinematics solver failed on 12.7% of frames.
   NM000281 marks them with ``BAD_IK`` annotations, and the study emits one
   event per contiguous resolved run so no window straddles a failure --

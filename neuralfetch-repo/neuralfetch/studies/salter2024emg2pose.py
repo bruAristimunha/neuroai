@@ -1,12 +1,10 @@
-"""EMG2Pose -- BIDS-native EMG hand-pose recordings."""
+"""NM000281 (Meta emg2pose) -- surface-EMG hand-pose recordings."""
 
 from __future__ import annotations
 
 import json
 import logging
 import typing as tp
-import urllib.error
-import urllib.request
 from pathlib import Path
 
 import mne
@@ -21,61 +19,7 @@ from neuralfetch import download
 from neuralfetch.studies.sivakumar2024emg2qwerty import BidsEmg  # noqa: F401
 from neuralset.events import study
 
-logger = logging.getLogger(__name__)
-
-#: Columns of the upstream ``emg2pose_metadata.csv`` that are not recoverable
-#: from the BIDS entities and sidecars alone.
-_SPLIT_COLUMNS = (
-    "split",
-    "generalization",
-    "moving_hand",
-    "held_out_user",
-    "held_out_stage",
-)
-
-#: Public standalone copy of the metadata table, for users whose BIDS download
-#: skipped ``sourcedata/``.
-METADATA_URL = "https://fb-ctrl-oss.s3.amazonaws.com/emg2pose/emg2pose_metadata.csv"
-
-
-def _clip(spans: list[tuple[float, float]], limit: float) -> list[tuple[float, float]]:
-    """Clip ``(start, stop)`` spans to ``[0, limit]``, as ``(start, duration)``."""
-    out = []
-    for start, stop in spans:
-        start, stop = max(0.0, start), min(stop, limit)
-        if stop > start:
-            out.append((start, stop - start))
-    return out
-
-
-def _complement(
-    bad: list[tuple[float, float]], limit: float
-) -> list[tuple[float, float]]:
-    """``(start, duration)`` spans of ``[0, limit]`` not covered by *bad*."""
-    good: list[tuple[float, float]] = []
-    cursor = 0.0
-    for start, stop in sorted(bad):
-        if start > cursor:
-            good.append((cursor, min(start, limit)))
-        cursor = max(cursor, stop)
-        if cursor >= limit:
-            break
-    if cursor < limit:
-        good.append((cursor, limit))
-    return _clip(good, limit)
-
-
-def _has_split_columns(path: Path) -> bool:
-    """``True`` if *path* parses as the upstream metadata table.
-
-    Reads the header alone, so an unfetched git-annex pointer or a truncated
-    download is rejected cheaply rather than being mistaken for the table.
-    """
-    try:
-        header = pd.read_csv(path, nrows=0)
-    except (OSError, ValueError, pd.errors.ParserError):
-        return False
-    return not {"filename", *_SPLIT_COLUMNS}.difference(header.columns)
+LOGGER = logging.getLogger(__name__)
 
 
 class Salter2024Emg2pose(study.Study):
@@ -83,10 +27,9 @@ class Salter2024Emg2pose(study.Study):
 
     Notes
     -----
-    The paper's train/val/test and generalization assignments live in
-    ``emg2pose_metadata.csv``, read from ``sourcedata/`` in the release, or
-    from a copy at the study path that ``download()`` fetches from
-    :data:`METADATA_URL`. Without it the split columns are absent.
+    The paper's train/val/test and generalization assignments are read from
+    ``sourcedata/emg2pose_metadata.csv``, which the release ships. Without it
+    the split columns are absent.
 
     Events are emitted one per contiguous span of frames whose
     inverse-kinematics labels resolved, matching upstream's
@@ -112,8 +55,8 @@ class Salter2024Emg2pose(study.Study):
     }
     """
     description: tp.ClassVar[str] = (
-        "193 subjects performing 29 hand-movement stages with a 16-channel EMG "
-        "wristband, paired with motion-capture joint angles."
+        "193 subjects performing staged hand movements with an EMG wristband, "
+        "paired with tracked hand-joint angles."
     )
 
     _info: tp.ClassVar[study.StudyInfo] = study.StudyInfo(
@@ -126,6 +69,14 @@ class Salter2024Emg2pose(study.Study):
     )
 
     NEMAR_DATASET_ID: tp.ClassVar[str] = "nm000281"
+    #: Columns of ``emg2pose_metadata.csv`` that the BIDS conversion drops.
+    SPLIT_COLUMNS: tp.ClassVar[tuple[str, ...]] = (
+        "split",
+        "generalization",
+        "moving_hand",
+        "held_out_user",
+        "held_out_stage",
+    )
     aliases: tp.ClassVar[tuple[str, ...]] = ("emg2pose", "nm000281")
     _bids_root_cache: Path | None = pydantic.PrivateAttr(default=None)
     _participant_users_cache: dict[str, str] | None = pydantic.PrivateAttr(default=None)
@@ -140,46 +91,6 @@ class Salter2024Emg2pose(study.Study):
         download.Eegdash(study=self.NEMAR_DATASET_ID, dset_dir=self.path).download(
             overwrite=overwrite
         )
-        self._download_split_metadata(overwrite=overwrite)
-
-    def _download_split_metadata(self, overwrite: bool = False) -> None:
-        """Fetch the standalone metadata table unless the release shipped one.
-
-        Best-effort: a failure here leaves the study fully usable, just without
-        the paper's split columns.
-        """
-        if self._existing_metadata_path() is not None and not overwrite:
-            return
-        target = self.path / "emg2pose_metadata.csv"
-        target.parent.mkdir(parents=True, exist_ok=True)
-        # Download to a sibling temp file and rename: a truncation that lands
-        # after the CSV header would otherwise pass the column check and build
-        # the split map from a prefix, silently dropping every recording past
-        # the cut from train/val/test.
-        partial = target.with_suffix(".csv.partial")
-        try:
-            urllib.request.urlretrieve(METADATA_URL, partial)  # noqa: S310
-            partial.replace(target)
-        except (urllib.error.URLError, OSError) as exc:
-            partial.unlink(missing_ok=True)
-            logger.warning("Could not fetch %s: %s", METADATA_URL, exc)
-
-    def _existing_metadata_path(self) -> Path | None:
-        """First *usable* metadata table among the supported locations.
-
-        Existence is not enough. NEMAR ships the release through git-annex,
-        and a tree cloned without fetching its annexed content leaves
-        ``sourcedata/emg2pose_metadata.csv`` as a one-line pointer to
-        ``/annex/objects/...``. Taking the first path that merely exists lets
-        that placeholder shadow a perfectly good copy alongside it, and the
-        failure then surfaces as a confusing missing-columns error. Candidates
-        are checked and skipped instead.
-        """
-        candidates = [
-            self.bids_root / "sourcedata" / "emg2pose_metadata.csv",
-            self.path / "emg2pose_metadata.csv",
-        ]
-        return next((c for c in candidates if _has_split_columns(c)), None)
 
     @property
     def bids_root(self) -> Path:
@@ -224,33 +135,31 @@ class Salter2024Emg2pose(study.Study):
     def recording_splits(self) -> dict[str, dict[str, tp.Any]]:
         """Map upstream HDF5 stems to the paper's split assignment.
 
-        Returns an empty mapping (and warns once) when the metadata table is
-        not present, so BIDS-only downloads keep working.
+        Read from ``sourcedata/emg2pose_metadata.csv``, which the release
+        ships: ``split`` and ``generalization`` are not BIDS entities and so
+        do not survive the conversion. Returns an empty mapping (and warns
+        once) when the table is absent, so a BIDS-only tree still loads and
+        ``PredefinedSplit`` fails at split time instead.
         """
         if self._split_metadata_cache is not None:
             return self._split_metadata_cache
-        path = self._existing_metadata_path()
-        if path is None:
-            logger.warning(
-                "No usable emg2pose metadata table under %s; the paper's split and "
-                "generalization columns will be absent. Fetch it from %s and place "
-                "it there, or run download().",
-                self.path,
-                METADATA_URL,
+        path = self.bids_root / "sourcedata" / "emg2pose_metadata.csv"
+        try:
+            table = pd.read_csv(path)
+            splits = {
+                str(row["filename"]): {
+                    column: row[column] for column in self.SPLIT_COLUMNS
+                }
+                for _, row in table.iterrows()
+            }
+        except (OSError, ValueError, KeyError):
+            LOGGER.warning(
+                "No usable %s; the paper's split and generalization columns "
+                "will be absent.",
+                path,
             )
-            self._split_metadata_cache = {}
-            return self._split_metadata_cache
-        table = pd.read_csv(path)
-        missing = {"filename", *_SPLIT_COLUMNS}.difference(table.columns)
-        if missing:
-            raise ValueError(
-                f"{path} is missing expected column(s): {sorted(missing)}. "
-                f"Expected the upstream emg2pose metadata table ({METADATA_URL})."
-            )
-        self._split_metadata_cache = {
-            str(row["filename"]): {col: row[col] for col in _SPLIT_COLUMNS}
-            for _, row in table.iterrows()
-        }
+            splits = {}
+        self._split_metadata_cache = splits
         return self._split_metadata_cache
 
     def _splits_for(self, source_file: tp.Any) -> dict[str, tp.Any]:
@@ -262,14 +171,7 @@ class Salter2024Emg2pose(study.Study):
         return splits.get(Path(str(source_file)).stem, {})
 
     def _scan_durations(self, session_dir: Path) -> dict[str, float]:
-        """Un-padded recording durations from a session's ``scans.tsv``.
-
-        The BDF writer pads the final data record with edge values, so the
-        file runs past the data and the event has to be bounded explicitly.
-        ``scans.tsv`` covers every recording and agrees exactly with the
-        sidecar's ``ValidSamples / SamplingFrequency`` wherever both are
-        present (22,468 of 25,253; the rest have no ``ValidSamples``).
-        """
+        """Un-padded recording durations from a session's ``scans.tsv``."""
         if session_dir in self._scans_cache:
             return self._scans_cache[session_dir]
         durations: dict[str, float] = {}
@@ -277,7 +179,7 @@ class Salter2024Emg2pose(study.Study):
             table = pd.read_csv(path, sep="\t")
             missing = {"filename", "duration"}.difference(table.columns)
             if missing:
-                logger.warning(
+                LOGGER.warning(
                     "%s has no %s column; recordings in this session have no "
                     "un-padded length and will be rejected.",
                     path,
@@ -333,34 +235,27 @@ class Salter2024Emg2pose(study.Study):
     ) -> list[tuple[float, float]]:
         """``(start, duration)`` seconds for each span with resolved IK.
 
-        NM000281 records IK failures as ``BAD_IK`` annotations -- its README:
+        NM000281 marks IK failures with ``BAD_IK`` annotations -- its README:
         "BAD_IK annotations mark samples where inverse-kinematics labels are
-        all zero". The annotations are the only usable source here: measured
-        over 60 recordings, upstream's all-zero test on the BDF joint samples
-        agrees with them only 87% of the time on average (as low as 32%), and
-        typically reports no failures at all where the annotations mark 15% of
-        the recording. Quantization does not preserve the exact zeros the
-        HDF5-side test relies on.
+        all zero". Those annotations are the only usable source: measured over
+        60 recordings, upstream's all-zero test on the BDF joint samples agrees
+        with them only 87% of the time on average and as little as 32%, because
+        BDF quantization does not preserve the exact zeros it relies on.
 
-        A recording with no annotation has no IK failures, so its whole valid
-        region is one clean span.
-
-        Spans are clipped to *valid_duration*: the BDF writer pads the last
-        data record with edge values, so the file runs past the data.
+        Spans are clipped to *valid_duration*: the BDF writer pads the final
+        data record with edge values, so the file runs past the data, and a
+        window over that tail would train on constant joint angles.
         """
         if valid_duration is None:
-            # Falling back to the file length would hand the BDF's edge-value
-            # padding to the loss as ground truth: constant joint angles, for
-            # up to a second per recording. Refuse instead.
             raise ValueError(
                 f"No un-padded duration for {filepath}: its session's scans.tsv "
                 "has no usable 'duration' entry, and the BDF is padded with edge "
                 "values, so the recording cannot be safely bounded."
             )
-        raw = mne.io.read_raw_bdf(filepath, preload=False, verbose="ERROR")
-        limit = valid_duration
-        annotations = raw.annotations
-        bad = [
+        annotations = mne.io.read_raw_bdf(
+            filepath, preload=False, verbose="ERROR"
+        ).annotations
+        bad = sorted(
             (float(onset), float(onset) + float(duration))
             for onset, duration, description in zip(
                 annotations.onset,
@@ -369,8 +264,17 @@ class Salter2024Emg2pose(study.Study):
                 strict=True,
             )
             if str(description) == self.IK_ANNOTATION
-        ]
-        return _complement(bad, limit)
+        )
+
+        spans: list[tuple[float, float]] = []
+        cursor = 0.0
+        for start, stop in [*bad, (valid_duration, valid_duration)]:
+            if start > cursor:
+                spans.append((cursor, min(start, valid_duration) - cursor))
+            cursor = max(cursor, stop)
+            if cursor >= valid_duration:
+                break
+        return [(start, duration) for start, duration in spans if duration > 0]
 
     def _load_timeline_events(self, timeline: dict[str, tp.Any]) -> pd.DataFrame:
         matches = mne_bids.find_matching_paths(

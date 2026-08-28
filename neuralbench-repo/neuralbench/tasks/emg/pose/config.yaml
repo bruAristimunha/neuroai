@@ -49,9 +49,6 @@ data:
       name: EmgExtractor
       picks: [misc]
       frequency: 2000.0
-      # BDF stores joints with a uV physical header (x1e6 -> radians), then
-      # radians -> degrees, the unit the paper reports angular error in.
-      scale_factor: 57295779.51308232
       filter: null
       notch_filter: null
       baseline: null
