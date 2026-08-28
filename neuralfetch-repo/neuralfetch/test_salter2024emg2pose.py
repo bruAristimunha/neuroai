@@ -1,4 +1,4 @@
-"""Tests for the span helpers in the ``emg2pose`` study.
+"""Tests for the span helpers in the ``salter2024emg2pose`` study.
 
 Study loading itself is covered by the automated ``StudyInfo`` check in
 ``test_studies.py``.
@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from neuralfetch.studies.emg2pose import _complement
+from neuralfetch.studies.salter2024emg2pose import _complement
 
 
 @pytest.mark.parametrize(

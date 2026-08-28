@@ -13,8 +13,6 @@ data:
     source:
       name: Salter2024Emg2pose
     split:
-      # ``valid_split_by: null`` keeps the paper's own validation
-      # recordings instead of re-drawing a validation set out of train.
       name: PredefinedSplit
       event_type: BidsEmg
       test_split_query: null
@@ -69,10 +67,7 @@ data:
 brain_model_output_size: &brain_model_output_size 20
 brain_model_config:
   =replace=: true
-  name: NeuroPoseNet
-  kwargs:
-    n_bands: 16
-    internal_sfreq: 200.0
+  name: NeuroPose
 trainer_config:
   monitor: val/mae
   mode: min

@@ -5,12 +5,6 @@
 # LICENSE file in the root directory of this source tree.
 
 # NeuroPose (Liu, Zhang & Gowda, WWW 2021), emg2pose's regression baseline.
-# Note: this port decimates to ``internal_sfreq`` and uses NeuroPose's original
-# pooling schedule, where emg2pose instead keeps 2 kHz and widens the schedule
-# (Section 3.5), so this variant sees no EMG content above 100 Hz.
 brain_model_config:
   =replace=: true
-  name: NeuroPoseNet
-  kwargs:
-    n_bands: 16
-    internal_sfreq: 200.0
+  name: NeuroPose

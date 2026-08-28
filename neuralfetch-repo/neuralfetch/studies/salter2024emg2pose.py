@@ -104,7 +104,6 @@ class Salter2024Emg2pose(study.Study):
 
     NEMAR_DATASET_ID: tp.ClassVar[str] = "nm000281"
     aliases: tp.ClassVar[tuple[str, ...]] = ("emg2pose", "nm000281")
-    description: tp.ClassVar[str] = "16-channel EMG and hand-pose recordings."
     split_metadata: Path | None = None
     skip_ik_failures: bool = True
     _bids_root_cache: Path | None = pydantic.PrivateAttr(default=None)

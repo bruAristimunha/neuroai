@@ -158,14 +158,13 @@ def _build_emg2qwerty() -> "torch.nn.Module":
 def _build_neuropose() -> "torch.nn.Module":
     import braindecode.models as bdm
 
-    # 16 EMG channels at 2 kHz over the paper's 5 s evaluation window; the
-    # model resamples internally to 200 Hz.  ``final_layer`` is the per-frame
-    # joint-angle head and is subtracted to report the backbone count.
-    return bdm.NeuroPoseNet(
+    # 16 EMG channels at 2 kHz over the paper's 5 s evaluation window.
+    # ``final_layer`` is the per-frame joint-angle head and is subtracted
+    # to report the backbone count.
+    return bdm.NeuroPose(
         n_chans=16,
         n_times=10000,
         n_outputs=20,
-        n_bands=16,
     )
 
 
@@ -491,12 +490,12 @@ MODELS: list[ModelEntry] = [
     ),
     # Task-specific EMG model (emg/pose regression task).
     ModelEntry(
-        name="NeuroPoseNet",
+        name="NeuroPose",
         family="classic",
         device="emg",
         year=2021,
         bibtex="liu2021neuropose",
-        config_name="NeuroPoseNet",
+        config_name="NeuroPose",
         cli_name="neuropose",
         builder=_build_neuropose,
         backbone_subtract=("final_layer",),

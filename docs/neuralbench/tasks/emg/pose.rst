@@ -74,12 +74,6 @@ Dataset Notes
   in the release under ``sourcedata/``; ``--download`` otherwise fetches the
   standalone copy.  Without it the split columns are absent and the task
   fails at split time rather than inventing a split.
-* **Sampling rate**: ``NeuroPoseNet`` [Liu2021]_ decimates 2 kHz to its
-  ``internal_sfreq`` and applies NeuroPose's original pooling schedule, where
-  emg2pose instead keeps 2 kHz and widens that schedule (Section 3.5).  The
-  receptive fields are comparable, but this route sees no EMG content above
-  100 Hz.
-
 .. warning::
 
    emg2pose is released under CC-BY-NC-SA-4.0, and the UmeTrack hand model
@@ -88,10 +82,6 @@ Dataset Notes
 
 References
 ~~~~~~~~~~
-
-.. [Liu2021] Liu, Yilin, Sai Zhang, and Mahanth Gowda. "NeuroPose: 3D hand
-   pose tracking using EMG wearables." *Proceedings of the Web Conference
-   2021*, 1471--1482.
 
 .. [Salter2024] Salter, Sasha, et al. "emg2pose: A large and diverse benchmark
    for surface electromyographic hand pose estimation." *Advances in Neural
