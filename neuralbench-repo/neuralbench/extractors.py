@@ -59,4 +59,3 @@ class SleepOnsetTargetExtractor(ns.extractors.BaseStatic):
                 start=event.start,
                 data=embedding.numpy(),
             )
-
