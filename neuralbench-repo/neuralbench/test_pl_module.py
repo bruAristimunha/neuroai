@@ -8,13 +8,17 @@
 
 from __future__ import annotations
 
+import typing as tp
 from types import SimpleNamespace
 
+import lightning.pytorch as pl
 import torch
 from torch import nn
 from torchmetrics.regression import MeanAbsoluteError
 
+from neuralset.dataloader import Batch
 from neuraltrain.metrics.metrics import GroupedMetric
+from neuraltrain.optimizers import LightningOptimizer
 
 from .pl_module import BrainModule
 
@@ -33,16 +37,19 @@ def test_trajectory_metrics_keep_the_output_axis() -> None:
             "mae": MeanAbsoluteError(num_outputs=2),
             "mae_by_subject": GroupedMetric(metric_name="MeanAbsoluteError"),
         },
-        lightning_optimizer_config=SimpleNamespace(),
+        lightning_optimizer_config=tp.cast(LightningOptimizer, object()),
     )
-    module._trainer = SimpleNamespace(world_size=1)
+    module._trainer = tp.cast(pl.Trainer, SimpleNamespace(world_size=1))
     module.log = lambda *args, **kwargs: None  # type: ignore[method-assign]
-    batch = SimpleNamespace(
-        data={
-            "neuro": torch.zeros(2, 3, 2),
-            "target": torch.ones(2, 3, 2),
-            "subject_id": torch.tensor([0, 1]),
-        }
+    batch = tp.cast(
+        Batch,
+        SimpleNamespace(
+            data={
+                "neuro": torch.zeros(2, 3, 2),
+                "target": torch.ones(2, 3, 2),
+                "subject_id": torch.tensor([0, 1]),
+            }
+        ),
     )
 
     module._run_step(batch, step_name="val", batch_idx=0)
