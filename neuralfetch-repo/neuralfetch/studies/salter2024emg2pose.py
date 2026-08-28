@@ -315,7 +315,11 @@ class Salter2024Emg2pose(study.Study):
                 "stage": stage,
                 "side": sidecar.get("HandSide", bids_path.recording),
                 "source_file": source_file,
-                "duration": self._scan_durations(bids_path.fpath.parent.parent).get(
+                # Not "duration": neuralset merges timeline keys into the
+                # events frame, where "duration" is the event's own span and
+                # would collide. This is the recording's un-padded length,
+                # used only to bound those spans.
+                "valid_duration": self._scan_durations(bids_path.fpath.parent.parent).get(
                     bids_path.fpath.name
                 ),
             }
@@ -419,7 +423,7 @@ class Salter2024Emg2pose(study.Study):
         not know the window length, and ``stride_drop_incomplete`` drops them
         at segmentation time.
         """
-        valid = timeline.get("duration")
+        valid = timeline.get("valid_duration")
         if valid is None:
             raise ValueError(
                 f"No un-padded duration for {filepath}; refusing to emit an event "
