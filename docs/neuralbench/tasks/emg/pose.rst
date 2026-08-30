@@ -45,14 +45,10 @@ step, which is a model-side change rather than a configuration one.
 Dataset Notes
 ~~~~~~~~~~~~~
 
-* **IK failures and padding**: ``BAD_IK`` BDF annotations split a recording
-  into resolved-label spans, and ``scans.tsv`` clips the padded BDF tail. A
-  recording without an unpadded duration is rejected.
-* **Splits**: the paper's ``split`` and ``generalization`` assignments are not
-  BIDS entities.  They are joined from the upstream ``emg2pose_metadata.csv``
-  on the HDF5 name each sidecar preserves as ``SourceFile``. The required
-  ``sourcedata/emg2pose_metadata.csv`` must be materialized locally; there is
-  no metadata fallback.
+* **IK failures and padding**: BIDS events mark ``BAD_IK`` spans and bound the
+  recording before the padded BDF tail.
+* **Splits**: the paper's ``split`` and ``generalization`` assignments are
+  read from each session's BIDS ``scans.tsv``.
 
 .. warning::
 
