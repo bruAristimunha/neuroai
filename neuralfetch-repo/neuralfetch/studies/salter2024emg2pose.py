@@ -19,10 +19,7 @@ import pandas as pd
 import pydantic
 
 from neuralfetch import download
-
-# Imported for its side effect: registers the ``BidsEmg`` event type this
-# study emits. Same reader, same BIDS conventions as emg2qwerty.
-from neuralfetch.studies.sivakumar2024emg2qwerty import BidsEmg  # noqa: F401
+from neuralfetch.bids import BidsEmg  # noqa: F401
 from neuralset.events import study
 
 LOGGER = logging.getLogger(__name__)
@@ -232,52 +229,6 @@ class Salter2024Emg2pose(study.Study):
     #: NM000281 marks IK failures with this BDF annotation.
     IK_ANNOTATION: tp.ClassVar[str] = "BAD_IK"
 
-    def _ik_clean_spans(
-        self, filepath: str, valid_duration: float | None
-    ) -> list[tuple[float, float]]:
-        """``(start, duration)`` seconds for each span with resolved IK.
-
-        NM000281 marks IK failures with ``BAD_IK`` annotations -- its README:
-        "BAD_IK annotations mark samples where inverse-kinematics labels are
-        all zero". Those annotations are the only usable source: measured over
-        60 recordings, upstream's all-zero test on the BDF joint samples agrees
-        with them only 87% of the time on average and as little as 32%, because
-        BDF quantization does not preserve the exact zeros it relies on.
-
-        Spans are clipped to *valid_duration*: the BDF writer pads the final
-        data record with edge values, so the file runs past the data, and a
-        window over that tail would train on constant joint angles.
-        """
-        if valid_duration is None:
-            raise ValueError(
-                f"No un-padded duration for {filepath}: its session's scans.tsv "
-                "has no usable 'duration' entry, and the BDF is padded with edge "
-                "values, so the recording cannot be safely bounded."
-            )
-        annotations = mne.io.read_raw_bdf(
-            filepath, preload=False, verbose="ERROR"
-        ).annotations
-        bad = sorted(
-            (float(onset), float(onset) + float(duration))
-            for onset, duration, description in zip(
-                annotations.onset,
-                annotations.duration,
-                annotations.description,
-                strict=True,
-            )
-            if str(description) == self.IK_ANNOTATION
-        )
-
-        spans: list[tuple[float, float]] = []
-        cursor = 0.0
-        for start, stop in [*bad, (valid_duration, valid_duration)]:
-            if start > cursor:
-                spans.append((cursor, min(start, valid_duration) - cursor))
-            cursor = max(cursor, stop)
-            if cursor >= valid_duration:
-                break
-        return [(start, duration) for start, duration in spans if duration > 0]
-
     def _load_timeline_events(self, timeline: dict[str, tp.Any]) -> pd.DataFrame:
         yield_rows: list[dict[str, tp.Any]] = []
         filepath = timeline["path"]
@@ -291,13 +242,7 @@ class Salter2024Emg2pose(study.Study):
         return pd.DataFrame(yield_rows)
 
     def _event_spans(self, filepath: str) -> list[tuple[float, float]]:
-        """Spans of a recording to emit as events.
-
-        One span per contiguous run of resolved IK frames.
-        Spans shorter than a window are not filtered here -- the study does
-        not know the window length, and ``stride_drop_incomplete`` drops them
-        at segmentation time.
-        """
+        """Return valid, non-IK-failure spans without BDF padding."""
         path = Path(filepath)
         valid = self._scan_durations(path.parent.parent).get(path.name)
         if valid is None:
@@ -305,4 +250,26 @@ class Salter2024Emg2pose(study.Study):
                 f"No un-padded duration for {filepath}; refusing to emit an event "
                 "that would extend into the BDF's edge-value padding."
             )
-        return list(self._ik_clean_spans(filepath, valid))
+        annotations = mne.io.read_raw_bdf(
+            filepath, preload=False, verbose="ERROR"
+        ).annotations
+        bad = sorted(
+            (max(0.0, float(onset)), min(valid, float(onset) + float(duration)))
+            for onset, duration, description in zip(
+                annotations.onset,
+                annotations.duration,
+                annotations.description,
+                strict=True,
+            )
+            if str(description) == self.IK_ANNOTATION
+            and onset < valid
+            and onset + duration > 0
+        )
+        spans, cursor = [], 0.0
+        for start, stop in bad:
+            if cursor < start:
+                spans.append((cursor, start - cursor))
+            cursor = max(cursor, stop)
+        if cursor < valid:
+            spans.append((cursor, valid - cursor))
+        return spans
