@@ -26,9 +26,8 @@ class Salter2024Emg2pose(study.Study):
 
     Notes
     -----
-    The paper's train/val/test and generalization assignments are read from
-    ``sourcedata/emg2pose_metadata.csv``, which must be materialized from the
-    release before running the task.
+    The paper's train/val/test and generalization assignments are stored with
+    each recording in BIDS ``scans.tsv`` files.
 
     Events cover the valid inverse-kinematics spans recorded in the BIDS
     ``events.tsv`` files.
@@ -67,15 +66,10 @@ class Salter2024Emg2pose(study.Study):
 
     NEMAR_DATASET_ID: tp.ClassVar[str] = "nm000281"
     IK_ANNOTATION: tp.ClassVar[str] = "BAD_IK"
-    #: Paper split fields not represented by BIDS entities or sidecars.
-    SPLIT_COLUMNS: tp.ClassVar[tuple[str, ...]] = (
-        "split",
-        "generalization",
-    )
     aliases: tp.ClassVar[tuple[str, ...]] = ("emg2pose", "nm000281")
     _participant_users_cache: dict[str, str] | None = pydantic.PrivateAttr(default=None)
-    _split_metadata_cache: dict[str, dict[str, tp.Any]] | None = pydantic.PrivateAttr(
-        default=None
+    _scan_metadata_cache: dict[Path, dict[str, dict[str, str]]] = pydantic.PrivateAttr(
+        default_factory=dict
     )
 
     def _download(self, overwrite: bool = False) -> None:
@@ -111,23 +105,24 @@ class Salter2024Emg2pose(study.Study):
         }
         return self._participant_users_cache
 
-    @property
-    def recording_splits(self) -> dict[str, dict[str, tp.Any]]:
-        """Map upstream HDF5 stems to the paper's split assignment.
-
-        ``split`` and ``generalization`` are not BIDS entities, so they are
-        joined from the release's required ``sourcedata`` table.
-        """
-        if self._split_metadata_cache is not None:
-            return self._split_metadata_cache
-        splits = tp.cast(
-            dict[str, dict[str, tp.Any]],
-            pd.read_csv(self.bids_root / "sourcedata" / "emg2pose_metadata.csv")
-            .set_index("filename")[list(self.SPLIT_COLUMNS)]
-            .to_dict("index"),
-        )
-        self._split_metadata_cache = splits
-        return splits
+    def _scan_metadata(self, bids_path: mne_bids.BIDSPath) -> dict[str, str]:
+        """Return the paper split metadata for one BIDS recording."""
+        scans = mne_bids.BIDSPath(
+            root=bids_path.root,
+            subject=bids_path.subject,
+            session=bids_path.session,
+            suffix="scans",
+            extension=".tsv",
+        ).fpath
+        if scans not in self._scan_metadata_cache:
+            table = pd.read_csv(scans, sep="\t").set_index("filename")
+            self._scan_metadata_cache[scans] = tp.cast(
+                dict[str, dict[str, str]],
+                table[["split", "generalization"]].to_dict("index"),
+            )
+        return self._scan_metadata_cache[scans][
+            f"{bids_path.datatype}/{bids_path.fpath.name}"
+        ]
 
     def iter_timelines(self) -> tp.Iterator[dict[str, tp.Any]]:
         """Yield recordings from BIDS entities, never parsed file names."""
@@ -141,7 +136,6 @@ class Salter2024Emg2pose(study.Study):
             subject = bids_path.subject
             user = self.participant_users.get(subject, subject)
             stage = sidecar.get("Stage")
-            source_file = sidecar["SourceFile"]
             values = {
                 "subject": bids_path.subject,
                 "session": bids_path.session,
@@ -155,7 +149,7 @@ class Salter2024Emg2pose(study.Study):
             }
             timeline = {key: value for key, value in values.items() if value is not None}
             timeline["user_stage"] = f"{user}/{stage}" if stage else user
-            timeline.update(self.recording_splits[Path(source_file).stem])
+            timeline.update(self._scan_metadata(bids_path))
             yield timeline
 
     def _load_timeline_events(self, timeline: dict[str, tp.Any]) -> pd.DataFrame:

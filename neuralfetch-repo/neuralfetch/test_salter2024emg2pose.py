@@ -19,13 +19,12 @@ def test_emg2pose_bids_event(tmp_path: Path) -> None:
     filename = "sub-01_ses-01_task-emg2pose_recording-left_emg.bdf"
     bdf = emg_dir / filename
     bdf.write_bytes(b"BDF")
-    bdf.with_suffix(".json").write_text('{"SourceFile": "run-01.hdf5"}')
     (root / "participants.tsv").write_text(
         "participant_id\toriginal_user\nsub-01\tuser-01\n"
     )
-    (root / "sourcedata").mkdir()
-    (root / "sourcedata" / "emg2pose_metadata.csv").write_text(
-        "filename,split,generalization\nrun-01,train,user\n"
+    (root / "sub-01" / "ses-01" / "sub-01_ses-01_scans.tsv").write_text(
+        "filename\tsplit\tgeneralization\n"
+        f"emg/{filename}\ttrain\tuser\n"
     )
     bdf.with_name(filename.replace("_emg.bdf", "_events.tsv")).write_text(
         "onset\tduration\ttrial_type\n0.0\t10.0\tstage\n2.0\t3.0\tBAD_IK\n"
