@@ -9,11 +9,9 @@
 from __future__ import annotations
 
 import json
-import logging
 import typing as tp
 from pathlib import Path
 
-import mne
 import mne_bids
 import pandas as pd
 import pydantic
@@ -21,8 +19,6 @@ import pydantic
 from neuralfetch import download
 from neuralfetch.bids import BidsEmg  # noqa: F401
 from neuralset.events import study
-
-LOGGER = logging.getLogger(__name__)
 
 
 class Salter2024Emg2pose(study.Study):
@@ -34,12 +30,8 @@ class Salter2024Emg2pose(study.Study):
     ``sourcedata/emg2pose_metadata.csv``, which must be materialized from the
     release before running the task.
 
-    Events are emitted one per contiguous span of frames whose
-    inverse-kinematics labels resolved, matching upstream's
-    ``skip_ik_failures`` datamodule default. This is not configurable:
-    neuralset rejects any study carrying non-default constructor fields
-    ("Class parameters are not yet supported"), so such a knob would raise
-    the moment it was set.
+    Events cover the valid inverse-kinematics spans recorded in the BIDS
+    ``events.tsv`` files.
     """
 
     bibtex: tp.ClassVar[str] = """
@@ -74,19 +66,16 @@ class Salter2024Emg2pose(study.Study):
     )
 
     NEMAR_DATASET_ID: tp.ClassVar[str] = "nm000281"
+    IK_ANNOTATION: tp.ClassVar[str] = "BAD_IK"
     #: Paper split fields not represented by BIDS entities or sidecars.
     SPLIT_COLUMNS: tp.ClassVar[tuple[str, ...]] = (
         "split",
         "generalization",
     )
     aliases: tp.ClassVar[tuple[str, ...]] = ("emg2pose", "nm000281")
-    _bids_root_cache: Path | None = pydantic.PrivateAttr(default=None)
     _participant_users_cache: dict[str, str] | None = pydantic.PrivateAttr(default=None)
     _split_metadata_cache: dict[str, dict[str, tp.Any]] | None = pydantic.PrivateAttr(
         default=None
-    )
-    _scans_cache: dict[Path, dict[str, float]] = pydantic.PrivateAttr(
-        default_factory=dict
     )
 
     def _download(self, overwrite: bool = False) -> None:
@@ -97,15 +86,12 @@ class Salter2024Emg2pose(study.Study):
     @property
     def bids_root(self) -> Path:
         """Return the BIDS root created by Eegdash or supplied by the user."""
-        if self._bids_root_cache is not None:
-            return self._bids_root_cache
         candidate = self.path / "download" / self.NEMAR_DATASET_ID
         if not (candidate.is_dir() and any(candidate.glob("sub-*"))):
             raise FileNotFoundError(
                 f"No BIDS tree found under {candidate}. Run Study.download() or "
                 f"symlink an existing {self.NEMAR_DATASET_ID} BIDS copy there."
             )
-        self._bids_root_cache = candidate
         return candidate
 
     @property
@@ -113,23 +99,15 @@ class Salter2024Emg2pose(study.Study):
         """Map BIDS subject labels to the release's anonymized user labels."""
         if self._participant_users_cache is not None:
             return self._participant_users_cache
-        path = self.bids_root / "participants.tsv"
-        if not path.is_file():
-            self._participant_users_cache = {}
-            return self._participant_users_cache
-        participants = pd.read_csv(path, sep="\t", dtype="string")
-        required = {"participant_id", "original_user"}
-        if not required.issubset(participants.columns):
-            self._participant_users_cache = {}
-            return self._participant_users_cache
         self._participant_users_cache = {
-            str(participant).removeprefix("sub-"): str(user)
-            for participant, user in zip(
-                participants["participant_id"],
-                participants["original_user"],
-                strict=True,
+            participant.removeprefix("sub-"): user
+            for participant, user in pd.read_csv(
+                self.bids_root / "participants.tsv",
+                sep="\t",
+                usecols=["participant_id", "original_user"],
             )
-            if pd.notna(participant) and pd.notna(user)
+            .dropna()
+            .itertuples(index=False, name=None)
         }
         return self._participant_users_cache
 
@@ -142,60 +120,14 @@ class Salter2024Emg2pose(study.Study):
         """
         if self._split_metadata_cache is not None:
             return self._split_metadata_cache
-        path = self.bids_root / "sourcedata" / "emg2pose_metadata.csv"
-        table = pd.read_csv(path)
-        required = {"filename", *self.SPLIT_COLUMNS}
-        missing = required.difference(table.columns)
-        if missing:
-            raise ValueError(
-                f"{path} is not the materialized EMG2Pose metadata table; "
-                f"missing {sorted(missing)}. Materialize the release's "
-                "sourcedata/ contents before running the paper split."
-            )
-        splits = {
-            str(row["filename"]): {column: row[column] for column in self.SPLIT_COLUMNS}
-            for _, row in table.iterrows()
-        }
-        if not splits:
-            raise ValueError(f"{path} contains no EMG2Pose split assignments")
+        splits = tp.cast(
+            dict[str, dict[str, tp.Any]],
+            pd.read_csv(self.bids_root / "sourcedata" / "emg2pose_metadata.csv")
+            .set_index("filename")[list(self.SPLIT_COLUMNS)]
+            .to_dict("index"),
+        )
         self._split_metadata_cache = splits
         return splits
-
-    def _splits_for(self, source_file: tp.Any) -> dict[str, tp.Any]:
-        """Look up the split row for a recording's upstream HDF5 name."""
-        splits = self.recording_splits
-        if source_file is None or pd.isna(source_file):
-            raise ValueError("BIDS sidecar has no SourceFile for paper split lookup")
-        # ``metadata.csv`` keys on the stem; the sidecar keeps the ``.hdf5``.
-        source_stem = Path(str(source_file)).stem
-        try:
-            return splits[source_stem]
-        except KeyError as error:
-            raise ValueError(
-                f"No EMG2Pose split assignment for BIDS SourceFile {source_file!r}"
-            ) from error
-
-    def _scan_durations(self, session_dir: Path) -> dict[str, float]:
-        """Un-padded recording durations from a session's ``scans.tsv``."""
-        if session_dir in self._scans_cache:
-            return self._scans_cache[session_dir]
-        durations: dict[str, float] = {}
-        for path in session_dir.glob("*_scans.tsv"):
-            table = pd.read_csv(path, sep="\t")
-            missing = {"filename", "duration"}.difference(table.columns)
-            if missing:
-                LOGGER.warning(
-                    "%s has no %s column; recordings in this session have no "
-                    "un-padded length and will be rejected.",
-                    path,
-                    sorted(missing),
-                )
-                continue
-            for name, duration in zip(table["filename"], table["duration"]):
-                if pd.notna(duration):
-                    durations[Path(str(name)).name] = float(duration)
-        self._scans_cache[session_dir] = durations
-        return durations
 
     def iter_timelines(self) -> tp.Iterator[dict[str, tp.Any]]:
         """Yield recordings from BIDS entities, never parsed file names."""
@@ -209,7 +141,7 @@ class Salter2024Emg2pose(study.Study):
             subject = bids_path.subject
             user = self.participant_users.get(subject, subject)
             stage = sidecar.get("Stage")
-            source_file = sidecar.get("SourceFile")
+            source_file = sidecar["SourceFile"]
             values = {
                 "subject": bids_path.subject,
                 "session": bids_path.session,
@@ -223,47 +155,35 @@ class Salter2024Emg2pose(study.Study):
             }
             timeline = {key: value for key, value in values.items() if value is not None}
             timeline["user_stage"] = f"{user}/{stage}" if stage else user
-            timeline.update(self._splits_for(source_file))
+            timeline.update(self.recording_splits[Path(source_file).stem])
             yield timeline
 
-    #: NM000281 marks IK failures with this BDF annotation.
-    IK_ANNOTATION: tp.ClassVar[str] = "BAD_IK"
-
     def _load_timeline_events(self, timeline: dict[str, tp.Any]) -> pd.DataFrame:
-        yield_rows: list[dict[str, tp.Any]] = []
         filepath = timeline["path"]
-        base = {
-            "type": "BidsEmg",
-            "filepath": filepath,
-        }
-
-        for start, duration in self._event_spans(filepath):
-            yield_rows.append(dict(base, start=start, duration=duration))
-        return pd.DataFrame(yield_rows)
+        return pd.DataFrame(
+            [
+                dict(type="BidsEmg", filepath=filepath, start=start, duration=duration)
+                for start, duration in self._event_spans(filepath)
+            ]
+        )
 
     def _event_spans(self, filepath: str) -> list[tuple[float, float]]:
-        """Return valid, non-IK-failure spans without BDF padding."""
+        """Return valid, non-IK-failure spans from the BIDS events."""
         path = Path(filepath)
-        valid = self._scan_durations(path.parent.parent).get(path.name)
-        if valid is None:
-            raise ValueError(
-                f"No un-padded duration for {filepath}; refusing to emit an event "
-                "that would extend into the BDF's edge-value padding."
-            )
-        annotations = mne.io.read_raw_bdf(
-            filepath, preload=False, verbose="ERROR"
-        ).annotations
+        events = pd.read_csv(
+            path.with_name(path.name.replace("_emg.bdf", "_events.tsv")), sep="\t"
+        )
+        valid = (
+            (events["onset"] + events["duration"])
+            .where(events["trial_type"] != self.IK_ANNOTATION)
+            .max()
+        )
         bad = sorted(
-            (max(0.0, float(onset)), min(valid, float(onset) + float(duration)))
-            for onset, duration, description in zip(
-                annotations.onset,
-                annotations.duration,
-                annotations.description,
-                strict=True,
-            )
-            if str(description) == self.IK_ANNOTATION
-            and onset < valid
-            and onset + duration > 0
+            (max(0.0, onset), min(valid, onset + duration))
+            for onset, duration in events.query("trial_type == @self.IK_ANNOTATION")[
+                ["onset", "duration"]
+            ].itertuples(index=False, name=None)
+            if onset < valid and onset + duration > 0
         )
         spans, cursor = [], 0.0
         for start, stop in bad:

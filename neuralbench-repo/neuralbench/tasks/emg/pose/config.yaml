@@ -53,9 +53,8 @@ data:
       notch_filter: null
       baseline: null
       scaler: null
-      # The BDF labels joints as uV. MNE returns those values in V, so this
-      # restores radians and converts to the degrees reported by the paper.
-      scale_factor: 57295779.51308232
+      # Joint labels are radians; report the paper's degree-based metrics.
+      scale_factor: 57.29577951308232
       clamp: null
   # 5-s trajectories, the paper's evaluation length.
   trigger_event_type: BidsEmg

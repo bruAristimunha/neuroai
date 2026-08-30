@@ -3,7 +3,7 @@ Hand pose decoding
 
 | **Name**: pose
 | **Category**: motor / hand-pose decoding
-| **Dataset**: :py:class:`~neuralset.studies.Salter2024Emg2pose` (NM000281, emg2pose)
+| **Dataset**: :py:class:`~neuralset.studies.Salter2024Emg2pose` (emg2pose)
 | **Objective**: :bdg-dark:`20-joint angle trajectory regression`
 | **Split**: The paper's ``train`` / ``val`` / ``test`` assignment
 

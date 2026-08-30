@@ -7,15 +7,11 @@
 """Tests for the EMG2Pose BIDS study source."""
 
 from pathlib import Path
-from types import SimpleNamespace
-
-import mne
-import pytest
 
 from neuralfetch.studies.salter2024emg2pose import Salter2024Emg2pose
 
 
-def test_emg2pose_bids_event(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_emg2pose_bids_event(tmp_path: Path) -> None:
     study = Salter2024Emg2pose(path=tmp_path)
     root = study.path / "download" / study.NEMAR_DATASET_ID
     emg_dir = root / "sub-01" / "ses-01" / "emg"
@@ -24,18 +20,15 @@ def test_emg2pose_bids_event(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     bdf = emg_dir / filename
     bdf.write_bytes(b"BDF")
     bdf.with_suffix(".json").write_text('{"SourceFile": "run-01.hdf5"}')
+    (root / "participants.tsv").write_text(
+        "participant_id\toriginal_user\nsub-01\tuser-01\n"
+    )
     (root / "sourcedata").mkdir()
     (root / "sourcedata" / "emg2pose_metadata.csv").write_text(
         "filename,split,generalization\nrun-01,train,user\n"
     )
-    (emg_dir.parent / "sub-01_ses-01_scans.tsv").write_text(
-        f"filename\tduration\nemg/{filename}\t10.0\n"
-    )
-    monkeypatch.setattr(
-        "neuralfetch.studies.salter2024emg2pose.mne.io.read_raw_bdf",
-        lambda *_args, **_kwargs: SimpleNamespace(
-            annotations=mne.Annotations([2.0], [3.0], [study.IK_ANNOTATION])
-        ),
+    bdf.with_name(filename.replace("_emg.bdf", "_events.tsv")).write_text(
+        "onset\tduration\ttrial_type\n0.0\t10.0\tstage\n2.0\t3.0\tBAD_IK\n"
     )
 
     timeline = next(study.iter_timelines())
