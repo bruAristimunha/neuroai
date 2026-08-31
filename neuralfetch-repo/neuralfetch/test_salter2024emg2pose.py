@@ -6,8 +6,12 @@
 
 """Tests for the EMG2Pose BIDS study source."""
 
+import json
 from pathlib import Path
 
+import mne
+import mne_bids
+import numpy as np
 import pytest
 
 from neuralfetch import download
@@ -37,10 +41,30 @@ def test_emg2pose_bids_event(tmp_path: Path) -> None:
 
     assert timeline["path"] == str(bdf)
     assert timeline["split"] == "train"
-    assert events.to_dict("records") == [
-        {"type": "BidsEmg", "filepath": str(bdf), "start": 0.0, "duration": 2.0},
-        {"type": "BidsEmg", "filepath": str(bdf), "start": 5.0, "duration": 5.0},
+    assert events[["type", "start"]].to_dict("records") == [
+        {"type": "BidsEmg", "start": 0.0}
     ]
+    loader = json.loads(events.iloc[0]["filepath"])
+    assert loader["method"] == "_load_raw"
+    assert loader["timeline"] == timeline
+
+
+def test_emg2pose_marks_bad_ik_targets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    info = mne.create_info(["emg", "target"], sfreq=10.0, ch_types=["emg", "misc"])
+    raw = mne.io.RawArray(np.ones((2, 10)), info)
+    raw.set_annotations(mne.Annotations([0.0, 0.2], [0.8, 0.3], ["stage", "BAD_IK"]))
+    monkeypatch.setattr(mne_bids, "read_raw_bids", lambda *args, **kwargs: raw)
+
+    loaded = Salter2024Emg2pose(path=tmp_path)._load_raw(
+        {"path": str(tmp_path / "recording_emg.bdf")}
+    )
+
+    np.testing.assert_array_equal(
+        loaded.get_data(picks="misc")[0],
+        [1.0, 1.0, -1000.0, -1000.0, -1000.0, 1.0, 1.0, 1.0],
+    )
 
 
 def test_emg2pose_debug_downloads_one_subject(
@@ -50,9 +74,8 @@ def test_emg2pose_debug_downloads_one_subject(
 
     class Eegdash:
         def __init__(self, **kwargs: str | Path | None) -> None:
-            captured["subject"] = (
-                kwargs.get("subject") if isinstance(kwargs.get("subject"), str) else None
-            )
+            subject = kwargs.get("subject")
+            captured["subject"] = subject if isinstance(subject, str) else None
 
         def download(self, overwrite: bool = False) -> None:
             pass

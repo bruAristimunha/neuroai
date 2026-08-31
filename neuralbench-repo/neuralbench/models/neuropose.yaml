@@ -8,3 +8,5 @@
 brain_model_config:
   =replace=: true
   name: NeuroPose
+  kwargs:
+    sfreq: 2000.0

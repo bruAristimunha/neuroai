@@ -42,6 +42,8 @@ class BrainModule(pl.LightningModule):
         A dictionary of retrieval metrics to compute on the full test set.
     target_scaler : nn.Module | None, optional
         A scaler to apply to the target values.
+    invalid_target : float | None, optional
+        Values at or below this sentinel are excluded from sequence losses and metrics.
     """
 
     def __init__(
@@ -53,6 +55,7 @@ class BrainModule(pl.LightningModule):
         test_full_metrics: dict[str, Metric] | None = None,
         test_full_retrieval_metrics: dict[str, Metric] | None = None,
         target_scaler: StandardScaler | None = None,
+        invalid_target: float | None = None,
     ):
         super().__init__()
         self._infer_forward_params(model)
@@ -60,6 +63,7 @@ class BrainModule(pl.LightningModule):
 
         self.loss = loss
         self.target_scaler = target_scaler
+        self.invalid_target = invalid_target
         self.lightning_optimizer_config = lightning_optimizer_config
 
         self.metrics = self._update_metrics(
@@ -134,6 +138,9 @@ class BrainModule(pl.LightningModule):
         self, batch: Batch, step_name: str, batch_idx: int
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         y_true = batch.data["target"]
+        invalid = None
+        if self.invalid_target is not None and y_true.ndim == 3:
+            invalid = (y_true <= self.invalid_target).any(dim=-1)
 
         if self.target_scaler is not None:
             y_true = self.target_scaler.transform(y_true)
@@ -159,14 +166,27 @@ class BrainModule(pl.LightningModule):
         y_pred = self.model_forward(batch)
 
         metric_pred, metric_true = y_pred, y_true
+        loss_pred, loss_true = y_pred, y_true
+        metric_subjects = batch.data["subject_id"]
         if y_pred.ndim == 3 and y_true.ndim == 3:
             if y_pred.shape[1] > y_true.shape[1]:
                 raise ValueError("Sequence prediction is longer than its target.")
-            # ``BidsEmg`` segments exclude ``BAD_IK`` spans upstream.  Some
-            # models additionally drop left context, so compare their valid tail.
+            # Some models drop left context, so compare their valid tail.
             y_true = y_true[:, -y_pred.shape[1] :]
-            metric_pred = y_pred.reshape(-1, y_pred.shape[-1])
-            metric_true = y_true.reshape(-1, y_true.shape[-1])
+            if invalid is not None:
+                assert self.invalid_target is not None
+                invalid = invalid[:, -y_pred.shape[1] :]
+                valid = ~invalid
+                metric_pred = loss_pred = y_pred[valid]
+                metric_true = loss_true = y_true[valid]
+                metric_subjects = metric_subjects[:, None].expand_as(valid)[valid]
+                y_pred = y_pred.masked_fill(invalid.unsqueeze(-1), self.invalid_target)
+                y_true = y_true.masked_fill(invalid.unsqueeze(-1), self.invalid_target)
+            else:
+                metric_pred = y_pred.reshape(-1, y_pred.shape[-1])
+                metric_true = y_true.reshape(-1, y_true.shape[-1])
+                loss_pred = y_pred.reshape(y_pred.shape[0], -1)
+                loss_true = y_true.reshape(y_true.shape[0], -1)
             y_pred = y_pred.reshape(y_pred.shape[0], -1)
             y_true = y_true.reshape(y_true.shape[0], -1)
 
@@ -188,8 +208,10 @@ class BrainModule(pl.LightningModule):
             loss = self.loss(
                 y_pred.transpose(0, 1), y_true, input_lengths, target_lengths
             )
+        elif loss_true.numel() == 0:
+            loss = loss_pred.sum() * 0
         else:
-            loss = self.loss(y_pred, y_true)
+            loss = self.loss(loss_pred, loss_true)
 
         # A loss may return a dict of named components with a ``"total"``
         # key (e.g. multi-term objectives); CTC and plain losses return a
@@ -207,9 +229,9 @@ class BrainModule(pl.LightningModule):
 
         # Just update metrics, don't compute or log yet
         for metric_name, metric in self.metrics.items():
-            if metric_name.startswith(step_name):
+            if metric_name.startswith(step_name) and metric_true.numel():
                 if isinstance(metric, GroupedMetric):
-                    metric.update(y_pred, y_true, batch.data["subject_id"])
+                    metric.update(metric_pred, metric_true, metric_subjects)
                 else:
                     if isinstance(metric, MultilabelConfusionMatrix):
                         metric.update(metric_pred, metric_true.int())

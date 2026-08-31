@@ -70,6 +70,7 @@ class Experiment(BaseExperiment):
     # Data
     data: Data
     target_scaler: StandardScaler | None = None
+    invalid_target: float | None = None
     compute_class_weights: bool = False
 
     # Model
@@ -189,6 +190,7 @@ class Experiment(BaseExperiment):
         self._brain_module = BrainModule(
             model=brain_model,
             target_scaler=self.target_scaler,
+            invalid_target=self.invalid_target,
             loss=self.loss.build(**loss_kwargs),
             lightning_optimizer_config=self.lightning_optimizer_config,
             metrics={metric.log_name: metric.build() for metric in self.metrics},

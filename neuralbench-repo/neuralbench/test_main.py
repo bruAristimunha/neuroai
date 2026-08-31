@@ -24,6 +24,7 @@ from neuraltrain.optimizers import LightningOptimizer
 from .callbacks import WindowPredictionCollector
 from .data import Data
 from .main import Experiment
+from .pl_module import BrainModule
 from .utils import TrainerConfig
 
 
@@ -35,6 +36,32 @@ class _DummyLoss:
 class _DummyBrainModule:
     def __init__(self, **kwargs) -> None:
         self.kwargs = kwargs
+
+
+def test_invalid_sequence_targets_are_masked(monkeypatch) -> None:
+    module = BrainModule(
+        model=nn.Identity(),
+        loss=nn.L1Loss(),
+        metrics={},
+        lightning_optimizer_config=tp.cast(LightningOptimizer, object()),
+        invalid_target=-1000.0,
+    )
+    module._trainer = SimpleNamespace(world_size=1)  # type: ignore[assignment]
+    monkeypatch.setattr(module, "log", lambda *args, **kwargs: None)
+    batch = SimpleNamespace(
+        data={
+            "neuro": torch.tensor([[[2.0], [999.0], [1.0]]]),
+            "target": torch.tensor([[[1.0], [-1000.0], [3.0]]]),
+            "subject_id": torch.tensor([0]),
+        }
+    )
+
+    loss, prediction, _ = module._run_step(
+        tp.cast(tp.Any, batch), step_name="val", batch_idx=0
+    )
+
+    assert loss.item() == 1.5
+    assert prediction.tolist() == [[2.0, -1000.0, 1.0]]
 
 
 def _make_experiment_with_capturing_build(

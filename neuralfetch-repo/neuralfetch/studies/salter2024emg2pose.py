@@ -13,7 +13,9 @@ import re
 import typing as tp
 from pathlib import Path
 
+import mne
 import mne_bids
+import numpy as np
 import pandas as pd
 import pydantic
 
@@ -30,8 +32,8 @@ class Salter2024Emg2pose(study.Study):
     The paper's train/val/test and generalization assignments are stored with
     each recording in BIDS ``scans.tsv`` files.
 
-    Events cover the valid inverse-kinematics spans recorded in the BIDS
-    ``events.tsv`` files.
+    Invalid inverse-kinematics samples are marked in the target channels with
+    ``-1000`` so downstream losses and predictions can mask them.
     """
 
     bibtex: tp.ClassVar[str] = """
@@ -59,7 +61,7 @@ class Salter2024Emg2pose(study.Study):
     _info: tp.ClassVar[study.StudyInfo] = study.StudyInfo(
         num_timelines=25253,
         num_subjects=193,
-        num_events_in_query=16,
+        num_events_in_query=1,
         event_types_in_query={"BidsEmg"},
         data_shape=(16, 3267),
         frequency=2000,
@@ -67,6 +69,7 @@ class Salter2024Emg2pose(study.Study):
 
     NEMAR_DATASET_ID: tp.ClassVar[str] = "nm000281"
     IK_ANNOTATION: tp.ClassVar[str] = "BAD_IK"
+    INVALID_TARGET: tp.ClassVar[float] = -1000.0
     aliases: tp.ClassVar[tuple[str, ...]] = ("emg2pose", "nm000281")
     _participant_users_cache: dict[str, str] | None = pydantic.PrivateAttr(default=None)
     _scan_metadata_cache: dict[Path, dict[str, dict[str, str]]] = pydantic.PrivateAttr(
@@ -157,37 +160,38 @@ class Salter2024Emg2pose(study.Study):
             yield timeline
 
     def _load_timeline_events(self, timeline: dict[str, tp.Any]) -> pd.DataFrame:
-        filepath = timeline["path"]
-        return pd.DataFrame(
-            [
-                dict(type="BidsEmg", filepath=filepath, start=start, duration=duration)
-                for start, duration in self._event_spans(filepath)
-            ]
-        )
+        filepath = study.SpecialLoader(method=self._load_raw, timeline=timeline).to_json()
+        return pd.DataFrame([dict(type="BidsEmg", filepath=filepath, start=0.0)])
 
-    def _event_spans(self, filepath: str) -> list[tuple[float, float]]:
-        """Return valid, non-IK-failure spans from the BIDS events."""
-        path = Path(filepath)
-        events = pd.read_csv(
-            path.with_name(path.name.replace("_emg.bdf", "_events.tsv")), sep="\t"
+    def _load_raw(self, timeline: dict[str, tp.Any]) -> mne.io.BaseRaw:
+        """Load one recording and mark targets without valid IK."""
+        raw = mne_bids.read_raw_bids(
+            mne_bids.get_bids_path_from_fname(timeline["path"]), verbose=False
+        ).load_data()
+        valid_end = max(
+            (
+                annotation["onset"] + annotation["duration"]
+                for annotation in raw.annotations
+                if annotation["description"] != self.IK_ANNOTATION
+            ),
+            default=raw.times[-1] + 1 / raw.info["sfreq"],
         )
-        valid = (
-            (events["onset"] + events["duration"])
-            .where(events["trial_type"] != self.IK_ANNOTATION)
-            .max()
+        stop = max(
+            1, min(raw.n_times, raw.time_as_index([valid_end], use_rounding=True)[0])
         )
-        bad = sorted(
-            (max(0.0, onset), min(valid, onset + duration))
-            for onset, duration in events.query("trial_type == @self.IK_ANNOTATION")[
-                ["onset", "duration"]
-            ].itertuples(index=False, name=None)
-            if onset < valid and onset + duration > 0
-        )
-        spans, cursor = [], 0.0
-        for start, stop in bad:
-            if cursor < start:
-                spans.append((cursor, start - cursor))
-            cursor = max(cursor, stop)
-        if cursor < valid:
-            spans.append((cursor, valid - cursor))
-        return spans
+        if stop < raw.n_times:
+            raw.crop(tmax=raw.times[stop - 1])
+        invalid = np.zeros(raw.n_times, dtype=bool)
+        for annotation in raw.annotations:
+            if annotation["description"] != self.IK_ANNOTATION:
+                continue
+            start, stop = raw.time_as_index(
+                [annotation["onset"], annotation["onset"] + annotation["duration"]],
+                use_rounding=True,
+            )
+            invalid[max(0, start) : min(raw.n_times, stop)] = True
+        if invalid.any():
+            raw.apply_function(
+                lambda data: np.where(invalid, self.INVALID_TARGET, data), picks="misc"
+            )
+        return raw

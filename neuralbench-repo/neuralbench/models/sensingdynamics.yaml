@@ -7,3 +7,5 @@
 brain_model_config:
   =replace=: true
   name: SensingDynamics
+  kwargs:
+    sfreq: 2000.0

@@ -64,9 +64,12 @@ data:
   stride_drop_incomplete: true
   summary_columns: [user, stage, side, generalization]
 brain_model_output_size: &brain_model_output_size 20
+invalid_target: -1000.0
 brain_model_config:
   =replace=: true
   name: VEMG2Pose
+  kwargs:
+    sfreq: 2000.0
 trainer_config:
   monitor: val/mae
   mode: min
