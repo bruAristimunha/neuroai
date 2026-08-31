@@ -124,7 +124,7 @@ def find_dataset_in_moabb(
 class _BaseMoabb(studies.Study):
     _dataset_kwargs: tp.ClassVar[dict[str, tp.Any]] = {}
     event_id: tp.ClassVar[dict[str, tp.Any]] = {}
-    requirements: tp.ClassVar[tuple[str, ...]] = ("moabb>=1.6.1",)
+    requirements: tp.ClassVar[tuple[str, ...]] = ("moabb>=1.7.0",)
 
     def _rename_numeric_descriptions(self, events_df: pd.DataFrame) -> None:
         """Auto-rename numeric descriptions inferred from event_id keys.
