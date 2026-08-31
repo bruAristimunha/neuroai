@@ -7,6 +7,7 @@ exclude-newer = "3 days"
 
 # Packages we publish — exempt from the window above.
 [tool.uv.exclude-newer-package]
+braindecode = "2099-01-01"
 exca = "2099-01-01"
 submitit = "2099-01-01"
 
