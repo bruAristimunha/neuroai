@@ -18,8 +18,7 @@ import pandas as pd
 import pydantic
 
 from neuralfetch import download
-from neuralfetch.bids import BidsEmg  # noqa: F401
-from neuralset.events import study
+from neuralset.events import etypes, study
 
 LOGGER = logging.getLogger(__name__)
 
@@ -39,6 +38,19 @@ _VOCAB: tuple[str, ...] = (
 PAPER_KEY_TO_LABEL: dict[str, int] = {key: i for i, key in enumerate(_VOCAB)}
 PAPER_NULL_CLASS = len(_VOCAB)  # 98 — canonical CTC blank index
 PAPER_NUM_CLASSES = PAPER_NULL_CLASS + 1  # 99 — CTC head width
+
+
+class BidsEmg(etypes.Emg):
+    """BIDS EMG event — reads via ``mne_bids.read_raw_bids``.
+
+    mne_bids ≥ 0.19 reads the channel types from ``channels.tsv`` and the
+    units from ``channels.tsv`` / ``_emg.json``, so the EMG channels are
+    returned in microvolts with no manual rescaling needed.
+    """
+
+    def _read(self) -> tp.Any:
+        bp = mne_bids.get_bids_path_from_fname(self.filepath)
+        return mne_bids.read_raw_bids(bp, verbose=False)
 
 
 class Sivakumar2024Emg2qwerty(study.Study):

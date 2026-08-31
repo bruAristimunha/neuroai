@@ -101,15 +101,8 @@ def compute_study_info(name: str, folder: str | Path) -> dict[str, tp.Any]:
             ev.etypes.Ieeg: ("seeg", "ecog"),
             ev.etypes.Meg: "meg",
         }
-        # Resolve by isinstance, not exact type: studies routinely subclass
-        # these event types (e.g. BidsEmg), and an exact lookup raises KeyError
-        # for every one of them.
-        picks = next(
-            (value for cls, value in pick_map.items() if isinstance(event, cls)),
-            None,
-        )
-        if picks is not None:
-            data.pick(picks)
+        if isinstance(event, tuple(pick_map)):
+            data.pick(pick_map[type(event)])
         actual["data_shape"] = (len(data.ch_names), int(data.n_times))
     actual["frequency"] = event.frequency  # type: ignore[attr-defined]
     return actual

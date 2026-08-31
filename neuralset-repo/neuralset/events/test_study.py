@@ -376,13 +376,15 @@ class _SimpleStudy(base.Study):
 
 
 class _PartialStudy(base.Study):
+    """Only one of the two declared timelines is on disk, as after a scoped download."""
+
     _info: tp.ClassVar[base.StudyInfo] = base.StudyInfo(num_timelines=2)
 
     def iter_timelines(self) -> tp.Iterator[dict[str, tp.Any]]:
         yield {"subject": "01"}
 
     def _load_timeline_events(self, timeline: dict[str, tp.Any]) -> pd.DataFrame:
-        return pd.DataFrame()
+        return pd.DataFrame([{"type": "Motor", "start": 0, "duration": 1}])
 
 
 def _build_simple(tmp_path: Path, **overrides: tp.Any) -> pd.DataFrame:

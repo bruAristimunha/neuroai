@@ -40,7 +40,7 @@ class _DummyBrainModule:
 
 
 @pytest.mark.parametrize("grouped", [False, True])
-def test_invalid_sequence_targets_are_masked(monkeypatch, grouped: bool) -> None:
+def test_unlabelled_sequence_frames_are_masked(monkeypatch, grouped: bool) -> None:
     metrics: dict[str, tp.Any] = {}
     if grouped:
         metrics["val/mae"] = GroupedMetric(metric_name="MeanAbsoluteError")
@@ -49,14 +49,16 @@ def test_invalid_sequence_targets_are_masked(monkeypatch, grouped: bool) -> None
         loss=nn.L1Loss(),
         metrics=metrics,
         lightning_optimizer_config=tp.cast(LightningOptimizer, object()),
-        invalid_target=-1000.0,
     )
     module._trainer = SimpleNamespace(world_size=1)  # type: ignore[assignment]
     monkeypatch.setattr(module, "log", lambda *args, **kwargs: None)
+    nan = float("nan")
     batch = SimpleNamespace(
         data={
-            "neuro": torch.tensor([[[2.0], [999.0], [1.0]]]),
-            "target": torch.tensor([[[1.0], [-1000.0], [3.0]]]),
+            # Identity model, so the prediction is time-major (B, T, C) while
+            # the extracted target is channel-major (B, C, T).
+            "neuro": torch.tensor([[[2.0, 2.0], [999.0, 999.0], [1.0, 1.0]]]),
+            "target": torch.tensor([[[1.0, nan, 3.0], [1.0, nan, 3.0]]]),
             # The loader emits (B, 1), not (B,).
             "subject_id": torch.tensor([[0]]),
         }
@@ -66,8 +68,8 @@ def test_invalid_sequence_targets_are_masked(monkeypatch, grouped: bool) -> None
         tp.cast(tp.Any, batch), step_name="val", batch_idx=0
     )
 
-    assert loss.item() == 1.5
-    assert prediction.tolist() == [[2.0, -1000.0, 1.0]]
+    assert loss.item() == 1.5, "the unlabelled frame contributes nothing"
+    assert prediction[0].isnan().tolist() == [False, False, True, True, False, False]
 
 
 def _make_experiment_with_capturing_build(

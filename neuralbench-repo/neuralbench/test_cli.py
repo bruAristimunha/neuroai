@@ -13,7 +13,6 @@ import pytest
 from exca import ConfDict
 
 import neuralset as ns
-from neuralfetch.studies.salter2024emg2pose import Salter2024Emg2pose
 
 from . import transforms as _transforms  # noqa: F401  — registers Step subclasses
 from .cli import run_benchmark
@@ -176,37 +175,3 @@ def test_run_benchmark_cli_help_smoke(
     out = capsys.readouterr().out
     assert "available datasets per task:" in out
     assert "eeg" in out
-
-
-def test_emg_pose_task_uses_degree_targets() -> None:
-    """Radian joint channels are converted to the paper's degrees."""
-    config = ConfDict(load_yaml_config(DEFAULTS_DIR / "config.yaml"))
-    grid = ConfDict(load_yaml_config(DEFAULTS_DIR / "grid.yaml"))
-    configs = prepare_task_configs(
-        config,
-        grid,
-        "emg",
-        "pose",
-        use_task_grid=False,
-        debug=False,
-        force=False,
-        prepare=False,
-        download=False,
-        models=[None],
-        datasets=None,
-    )
-    data = Data(**configs[0]["data"])
-    target: tp.Any = data.target
-
-    assert target.extractor.scale_factor == pytest.approx(180.0 / 3.141592653589793)
-
-
-def test_emg_pose_debug_spans_every_split() -> None:
-    config = ConfDict(load_yaml_config(DEFAULTS_DIR / "config.yaml"))
-    grid = ConfDict(load_yaml_config(DEFAULTS_DIR / "grid.yaml"))
-    debug_config = prepare_task_configs(
-        config, grid, "emg", "pose", False, True, False, False, False, [None]
-    )[0]
-    assert Salter2024Emg2pose._query_subjects(
-        debug_config["data.study.source.query"]
-    ) == ["60", "166"]

@@ -14,7 +14,7 @@ data:
       name: Salter2024Emg2pose
     split:
       name: PredefinedSplit
-      event_type: BidsEmg
+      event_type: Emg
       test_split_query: null
       col_name: split
       valid_split_by: null
@@ -42,29 +42,24 @@ data:
   target:
     =replace=: true
     # The 20 joint angles are MISC channels in the same BDF as the EMG.
-    # Transposed to (T, C) to match the backbone's per-frame output, because
-    # the loss flattens both to (batch, -1).
-    name: TimeMajorExtractor
-    extractor:
-      name: EmgExtractor
-      picks: [misc]
-      frequency: 2000.0
-      filter: null
-      notch_filter: null
-      baseline: null
-      scaler: null
-      # Joint labels are radians; report the paper's degree-based metrics.
-      scale_factor: 57.29577951308232
-      clamp: null
+    name: EmgExtractor
+    picks: [misc]
+    frequency: 2000.0
+    filter: null
+    notch_filter: null
+    baseline: null
+    scaler: null
+    # Joint labels are radians; report the paper's degree-based metrics.
+    scale_factor: 57.29577951308232
+    clamp: null
   # 5-s trajectories, the paper's evaluation length.
-  trigger_event_type: BidsEmg
+  trigger_event_type: Emg
   start: 0.0
   duration: 5.0
   stride: 5.0
   stride_drop_incomplete: true
   summary_columns: [user, stage, side, generalization]
 brain_model_output_size: &brain_model_output_size 20
-invalid_target: -1000.0
 brain_model_config:
   =replace=: true
   name: VEMG2Pose

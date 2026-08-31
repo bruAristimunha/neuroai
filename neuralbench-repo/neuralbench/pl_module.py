@@ -42,8 +42,6 @@ class BrainModule(pl.LightningModule):
         A dictionary of retrieval metrics to compute on the full test set.
     target_scaler : nn.Module | None, optional
         A scaler to apply to the target values.
-    invalid_target : float | None, optional
-        Values at or below this sentinel are excluded from sequence losses and metrics.
     """
 
     def __init__(
@@ -55,7 +53,6 @@ class BrainModule(pl.LightningModule):
         test_full_metrics: dict[str, Metric] | None = None,
         test_full_retrieval_metrics: dict[str, Metric] | None = None,
         target_scaler: StandardScaler | None = None,
-        invalid_target: float | None = None,
     ):
         super().__init__()
         self._infer_forward_params(model)
@@ -63,7 +60,6 @@ class BrainModule(pl.LightningModule):
 
         self.loss = loss
         self.target_scaler = target_scaler
-        self.invalid_target = invalid_target
         self.lightning_optimizer_config = lightning_optimizer_config
 
         self.metrics = self._update_metrics(
@@ -138,9 +134,6 @@ class BrainModule(pl.LightningModule):
         self, batch: Batch, step_name: str, batch_idx: int
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         y_true = batch.data["target"]
-        invalid = None
-        if self.invalid_target is not None and y_true.ndim == 3:
-            invalid = (y_true <= self.invalid_target).any(dim=-1)
 
         if self.target_scaler is not None:
             y_true = self.target_scaler.transform(y_true)
@@ -169,27 +162,24 @@ class BrainModule(pl.LightningModule):
         loss_pred, loss_true = y_pred, y_true
         metric_subjects = batch.data["subject_id"]
         if y_pred.ndim == 3 and y_true.ndim == 3:
+            # A dense prediction is time-major (B, T, C) -- braindecode's
+            # convention -- while an extracted target is channel-major (B, C, T).
+            y_true = y_true.transpose(1, 2)
             if y_pred.shape[1] > y_true.shape[1]:
-                raise ValueError("Sequence prediction is longer than its target.")
-            # Some models drop left context, so compare their valid tail.
+                raise ValueError(
+                    f"Prediction spans {y_pred.shape[1]} frames but its target "
+                    f"only {y_true.shape[1]}."
+                )
+            # Models that consume left context emit only the window's valid tail.
             y_true = y_true[:, -y_pred.shape[1] :]
-            # Metric rows are frames, not samples: (B, 1) -> (B, T).
-            frame_subjects = metric_subjects.reshape(-1, 1).expand(-1, y_pred.shape[1])
-            if invalid is not None:
-                assert self.invalid_target is not None
-                invalid = invalid[:, -y_pred.shape[1] :]
-                valid = ~invalid
-                metric_pred = loss_pred = y_pred[valid]
-                metric_true = loss_true = y_true[valid]
-                metric_subjects = frame_subjects[valid]
-                y_pred = y_pred.masked_fill(invalid.unsqueeze(-1), self.invalid_target)
-                y_true = y_true.masked_fill(invalid.unsqueeze(-1), self.invalid_target)
-            else:
-                metric_pred = y_pred.reshape(-1, y_pred.shape[-1])
-                metric_true = y_true.reshape(-1, y_true.shape[-1])
-                metric_subjects = frame_subjects.reshape(-1)
-                loss_pred = y_pred.reshape(y_pred.shape[0], -1)
-                loss_true = y_true.reshape(y_true.shape[0], -1)
+            # NaN marks a frame the study could not label (e.g. unresolved
+            # inverse kinematics); it must reach neither the loss nor a metric.
+            valid = ~y_true.isnan().any(dim=-1)
+            metric_pred = loss_pred = y_pred[valid]
+            metric_true = loss_true = y_true[valid]
+            # Metric rows are frames, not windows: (B, 1) -> (B, T).
+            metric_subjects = metric_subjects.reshape(-1, 1).expand_as(valid)[valid]
+            y_pred = y_pred.masked_fill(~valid.unsqueeze(-1), torch.nan)
             y_pred = y_pred.reshape(y_pred.shape[0], -1)
             y_true = y_true.reshape(y_true.shape[0], -1)
 
@@ -212,7 +202,8 @@ class BrainModule(pl.LightningModule):
                 y_pred.transpose(0, 1), y_true, input_lengths, target_lengths
             )
         elif loss_true.numel() == 0:
-            loss = loss_pred.sum() * 0
+            # Every frame unlabelled: a zero still attached to the graph.
+            loss = loss_pred.sum()
         else:
             loss = self.loss(loss_pred, loss_true)
 

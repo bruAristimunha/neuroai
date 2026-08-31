@@ -46,7 +46,8 @@ Dataset Notes
 ~~~~~~~~~~~~~
 
 * **IK failures and padding**: BIDS events mark ``BAD_IK`` spans and bound the
-  recording before the padded BDF tail.
+  recording before the padded BDF tail. Those spans are blanked to ``NaN`` in
+  the target channels, and excluded from the loss and the metrics.
 * **Splits**: the paper's ``split`` and ``generalization`` labels are read from
   the session's BIDS ``scans.tsv``. NEMAR tags up to ``v1.0.3`` omit those two
   columns, so for those releases the labels are joined from the upstream

@@ -367,47 +367,6 @@ class HuggingFacePCA(ExtractorPCA):
             )
 
 
-class TimeMajorExtractor(base.BaseExtractor):
-    """Swap the channel and time axes of a dynamic extractor: ``(C, T) -> (T, C)``.
-
-    Losses that flatten a 3-D prediction and a 3-D target to ``(batch, -1)``
-    require both to agree on axis order. Dense per-frame model outputs are
-    time-major while :class:`~neuralset.extractors.MneRaw` is channel-major,
-    so one side has to be transposed.
-
-    Parameters
-    ----------
-    extractor: BaseExtractor
-        The extractor whose output should be transposed.
-    """
-
-    event_types: str | tuple[str, ...] = "Event"
-    extractor: base.BaseExtractor
-
-    def model_post_init(self, log__: tp.Any) -> None:
-        self.event_types = self.extractor.event_types
-        self.frequency = self.extractor.frequency
-        return super().model_post_init(log__)
-
-    def prepare(self, events: pd.DataFrame) -> None:
-        self.extractor.prepare(events)
-
-    def __call__(
-        self,
-        events: tp.Any,
-        start: float,
-        duration: float,
-        trigger: Event | pd.Series | dict | None = None,
-    ) -> torch.Tensor:
-        # ``.contiguous()``: the transposed view collates ~5x slower and is
-        # unsafe for a later ``.view()``.
-        return (
-            self.extractor(events, start, duration, trigger)
-            .transpose(-1, -2)
-            .contiguous()
-        )
-
-
 class CroppedExtractor(base.BaseStatic):  # can be static or not
     """Crop a extractor to a given offset and duration.
 
