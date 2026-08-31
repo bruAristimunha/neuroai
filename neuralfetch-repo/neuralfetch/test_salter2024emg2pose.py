@@ -58,5 +58,7 @@ def test_emg2pose_debug_downloads_one_subject(
             pass
 
     monkeypatch.setattr(download, "Eegdash", Eegdash)
-    Salter2024Emg2pose(path=tmp_path, query="subject == '13'")._download()
+    Salter2024Emg2pose(
+        path=tmp_path, query="subject == 'Salter2024Emg2pose/13'"
+    )._download()
     assert captured["subject"] == "13"

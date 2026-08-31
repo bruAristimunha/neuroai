@@ -78,7 +78,7 @@ class Salter2024Emg2pose(study.Study):
         download.Eegdash(
             study=self.NEMAR_DATASET_ID,
             dset_dir=self.path,
-            subject=match.group(1) if match else None,
+            subject=match.group(1).rsplit("/", maxsplit=1)[-1] if match else None,
         ).download(overwrite=overwrite)
 
     @property

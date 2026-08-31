@@ -206,4 +206,4 @@ def test_emg_pose_debug_uses_one_subject() -> None:
     debug_config = prepare_task_configs(
         config, grid, "emg", "pose", False, True, False, False, False, [None]
     )[0]
-    assert debug_config["data.study.source.query"] == "subject == '13'"
+    assert debug_config["data.study.source.query"] == "subject == 'Salter2024Emg2pose/13'"
