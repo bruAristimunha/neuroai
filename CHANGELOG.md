@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-- `neuralfetch`: join EMG2Pose paper split metadata from the upstream `emg2pose_metadata.csv`, which the NEMAR BIDS release does not carry (#229).
+- `neuralfetch`: read EMG2Pose paper split metadata from the BIDS `scans.tsv`, falling back to the upstream `emg2pose_metadata.csv` on NEMAR releases that omit those columns (#229).
 - `neuralset`: `Study.version` is now a top-level field; `infra_timelines` → `timelines.infra` (Step syntax, defaults to `ProcessPool`). Requires exca ≥ 0.5.27. (#194)
 - `neuralset`: fixed `Mne2013Sample`/`Fake2025Meg` re-downloading MNE sample data on `run()` after `download()` (#157).
 - `neuralfetch`: added `Allen2022MassiveRaw` (BIDS/deepprep NSD variant) and gated NSD downloads behind `NSD_ACCEPT_LICENCE` (#105).

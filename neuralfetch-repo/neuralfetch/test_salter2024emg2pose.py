@@ -20,8 +20,12 @@ from neuralfetch import download
 from neuralfetch.studies.salter2024emg2pose import Salter2024Emg2pose
 
 
-def _make_release(study: Salter2024Emg2pose) -> Path:
-    """Write a one-recording BIDS tree plus the upstream metadata table."""
+def _make_release(study: Salter2024Emg2pose, split_in_scans: bool = False) -> Path:
+    """Write a one-recording BIDS tree plus the upstream metadata table.
+
+    ``split_in_scans`` selects the upstream ``main`` layout, which carries
+    ``split``/``generalization`` in ``scans.tsv``; tags up to v1.0.3 do not.
+    """
     root = study.path / "download" / study.NEMAR_DATASET_ID
     emg_dir = root / "sub-01/ses-01/emg"
     emg_dir.mkdir(parents=True)
@@ -30,8 +34,21 @@ def _make_release(study: Salter2024Emg2pose) -> Path:
     (root / "participants.tsv").write_text(
         "participant_id\toriginal_user\nsub-01\tuser-01\n"
     )
+    columns, values = (
+        ["stage", "side", "source_file"],
+        [
+            "HandClawGraspFlicks",
+            "left",
+            "rec-1_left.hdf5",
+        ],
+    )
+    if split_in_scans:
+        columns += ["split", "generalization"]
+        values += ["train", "none"]
     (emg_dir.parent / "sub-01_ses-01_scans.tsv").write_text(
-        f"filename\tsource_file\nemg/{bdf.name}\trec-1_left.hdf5\n"
+        "filename\t{}\nemg/{}\t{}\n".format(
+            "\t".join(columns), bdf.name, "\t".join(values)
+        )
     )
     study.metadata_path.write_text(
         "filename,split,generalization,stage,side\n"
@@ -40,9 +57,12 @@ def _make_release(study: Salter2024Emg2pose) -> Path:
     return bdf
 
 
-def test_emg2pose_timeline_joins_upstream_metadata(tmp_path: Path) -> None:
+@pytest.mark.parametrize("split_in_scans", [False, True])
+def test_emg2pose_timeline_carries_paper_split(
+    tmp_path: Path, split_in_scans: bool
+) -> None:
     study = Salter2024Emg2pose(path=tmp_path)
-    bdf = _make_release(study)
+    bdf = _make_release(study, split_in_scans=split_in_scans)
 
     timeline = next(study.iter_timelines())
     events = study._load_timeline_events(timeline)
@@ -65,10 +85,15 @@ def test_emg2pose_timeline_joins_upstream_metadata(tmp_path: Path) -> None:
     ]
     assert json.loads(events.iloc[0]["filepath"])["method"] == "_load_raw"
 
-    # A fresh study, since the first one memoized the table it just read.
+    # Fresh studies below, since the first one memoized what it read.
     study.metadata_path.unlink()
-    with pytest.raises(FileNotFoundError, match="emg2pose_metadata.csv"):
-        next(Salter2024Emg2pose(path=tmp_path).iter_timelines())
+    if split_in_scans:
+        assert (
+            next(Salter2024Emg2pose(path=tmp_path).iter_timelines())["split"] == "train"
+        )
+    else:
+        with pytest.raises(FileNotFoundError, match="emg2pose_metadata.csv"):
+            next(Salter2024Emg2pose(path=tmp_path).iter_timelines())
 
 
 def test_emg2pose_marks_bad_ik_targets(

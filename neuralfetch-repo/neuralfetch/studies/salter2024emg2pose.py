@@ -31,9 +31,10 @@ class Salter2024Emg2pose(study.Study):
 
     Notes
     -----
-    The NEMAR release carries no split: the paper's ``split`` and
-    ``generalization`` labels come from the upstream ``emg2pose_metadata.csv``,
-    joined per recording on the ``source_file`` of the BIDS ``scans.tsv``.
+    Each recording is described by its session's BIDS ``scans.tsv``. NEMAR tags
+    up to ``v1.0.3`` omit the paper's ``split`` and ``generalization`` there
+    (upstream ``main`` carries them), so when the columns are absent the labels
+    are joined from the upstream ``emg2pose_metadata.csv`` on ``source_file``.
 
     Invalid inverse-kinematics samples are marked in the target channels with
     ``-1000`` so downstream losses and predictions can mask them.
@@ -87,7 +88,7 @@ class Salter2024Emg2pose(study.Study):
     _recording_metadata_cache: dict[str, dict[str, str]] | None = pydantic.PrivateAttr(
         default=None
     )
-    _source_file_cache: dict[Path, dict[str, str]] = pydantic.PrivateAttr(
+    _scan_metadata_cache: dict[Path, dict[str, dict[str, str]]] = pydantic.PrivateAttr(
         default_factory=dict
     )
 
@@ -159,9 +160,9 @@ class Salter2024Emg2pose(study.Study):
         if self._recording_metadata_cache is None:
             if not self.metadata_path.is_file():
                 raise FileNotFoundError(
-                    f"{self.metadata_path} is missing. The NEMAR release does not "
-                    "carry the paper's train/val/test assignment; run "
-                    f"Study.download() to fetch it from {self.METADATA_URL}."
+                    f"{self.metadata_path} is missing, and this release's scans.tsv "
+                    "carries no split/generalization (NEMAR tags up to v1.0.3); run "
+                    f"Study.download() to fetch the table from {self.METADATA_URL}."
                 )
             table = pd.read_csv(
                 self.metadata_path, usecols=["filename", *self.METADATA_FIELDS]
@@ -171,8 +172,8 @@ class Salter2024Emg2pose(study.Study):
             )
         return self._recording_metadata_cache
 
-    def _source_file(self, bids_path: mne_bids.BIDSPath) -> str:
-        """Return the upstream recording name one BIDS file was converted from."""
+    def _scan_metadata(self, bids_path: mne_bids.BIDSPath) -> dict[str, str]:
+        """Return the session ``scans.tsv`` row describing one BIDS recording."""
         scans = mne_bids.BIDSPath(
             root=bids_path.root,
             subject=bids_path.subject,
@@ -180,15 +181,23 @@ class Salter2024Emg2pose(study.Study):
             suffix="scans",
             extension=".tsv",
         ).fpath
-        if scans not in self._source_file_cache:
+        if scans not in self._scan_metadata_cache:
             table = pd.read_csv(scans, sep="\t").set_index("filename")
-            self._source_file_cache[scans] = tp.cast(
-                dict[str, str], table["source_file"].to_dict()
+            self._scan_metadata_cache[scans] = tp.cast(
+                dict[str, dict[str, str]], table.to_dict("index")
             )
-        name = self._source_file_cache[scans][
+        return self._scan_metadata_cache[scans][
             f"{bids_path.datatype}/{bids_path.fpath.name}"
         ]
-        return name.removesuffix(".hdf5")
+
+    def _recording_fields(self, bids_path: mne_bids.BIDSPath) -> dict[str, str]:
+        """Return the paper's split and description fields for one recording."""
+        scan = self._scan_metadata(bids_path)
+        if all(field in scan for field in self.METADATA_FIELDS):
+            return {field: scan[field] for field in self.METADATA_FIELDS}
+        source_file = str(scan["source_file"]).removesuffix(".hdf5")
+        upstream = self.recording_metadata[source_file]
+        return {field: scan.get(field, upstream[field]) for field in self.METADATA_FIELDS}
 
     def iter_timelines(self) -> tp.Iterator[dict[str, tp.Any]]:
         """Yield recordings from BIDS entities, never parsed file names."""
@@ -196,7 +205,7 @@ class Salter2024Emg2pose(study.Study):
             root=self.bids_root, datatypes="emg", extensions=".bdf"
         ):
             user = self.participant_users.get(bids_path.subject, bids_path.subject)
-            metadata = self.recording_metadata[self._source_file(bids_path)]
+            metadata = self._recording_fields(bids_path)
             values = {
                 "subject": bids_path.subject,
                 "session": bids_path.session,

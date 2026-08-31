@@ -47,10 +47,10 @@ Dataset Notes
 
 * **IK failures and padding**: BIDS events mark ``BAD_IK`` spans and bound the
   recording before the padded BDF tail.
-* **Splits**: the NEMAR release carries no split assignment, so the paper's
-  ``split`` and ``generalization`` labels are fetched from the upstream
-  ``emg2pose_metadata.csv`` and joined to each recording on the
-  ``source_file`` column of the session's BIDS ``scans.tsv``.
+* **Splits**: the paper's ``split`` and ``generalization`` labels are read from
+  the session's BIDS ``scans.tsv``. NEMAR tags up to ``v1.0.3`` omit those two
+  columns, so for those releases the labels are joined from the upstream
+  ``emg2pose_metadata.csv`` on the ``scans.tsv`` ``source_file``.
 
 .. warning::
 
