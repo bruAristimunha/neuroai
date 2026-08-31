@@ -8,6 +8,9 @@
 
 from pathlib import Path
 
+import pytest
+
+from neuralfetch import download
 from neuralfetch.studies.salter2024emg2pose import Salter2024Emg2pose
 
 
@@ -38,3 +41,22 @@ def test_emg2pose_bids_event(tmp_path: Path) -> None:
         {"type": "BidsEmg", "filepath": str(bdf), "start": 0.0, "duration": 2.0},
         {"type": "BidsEmg", "filepath": str(bdf), "start": 5.0, "duration": 5.0},
     ]
+
+
+def test_emg2pose_debug_downloads_one_subject(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured: dict[str, str | None] = {}
+
+    class Eegdash:
+        def __init__(self, **kwargs: str | Path | None) -> None:
+            captured["subject"] = (
+                kwargs.get("subject") if isinstance(kwargs.get("subject"), str) else None
+            )
+
+        def download(self, overwrite: bool = False) -> None:
+            pass
+
+    monkeypatch.setattr(download, "Eegdash", Eegdash)
+    Salter2024Emg2pose(path=tmp_path, query="subject == '13'")._download()
+    assert captured["subject"] == "13"
