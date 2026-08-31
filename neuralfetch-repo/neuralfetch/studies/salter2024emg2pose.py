@@ -31,11 +31,9 @@ class Salter2024Emg2pose(study.Study):
 
     Notes
     -----
-    The NEMAR release carries no split assignment: its ``scans.tsv`` files only
-    describe each recording (``stage``, ``side``, ``source_file``). The paper's
-    ``split`` and ``generalization`` labels live in the upstream release's
-    ``emg2pose_metadata.csv``, which :meth:`_download` fetches alongside the
-    BIDS tree and which is joined per recording on ``source_file``.
+    The NEMAR release carries no split: the paper's ``split`` and
+    ``generalization`` labels come from the upstream ``emg2pose_metadata.csv``,
+    joined per recording on the ``source_file`` of the BIDS ``scans.tsv``.
 
     Invalid inverse-kinematics samples are marked in the target channels with
     ``-1000`` so downstream losses and predictions can mask them.
@@ -95,24 +93,14 @@ class Salter2024Emg2pose(study.Study):
 
     @staticmethod
     def _query_subjects(query: str | None) -> list[str] | None:
-        """Return the subject labels a subject-only query selects, else ``None``.
-
-        Scoping the download to a subset is only safe when the query names its
-        subjects outright; any other query has to fall back to the whole
-        release, so it must be distinguishable from "no query at all".
-        """
-        if query is None:
+        """Return the subject labels a subject-only query selects, else ``None``."""
+        # ``None`` means "no safe scope": the caller then fetches everything.
+        if query is None or not re.fullmatch(
+            r"subject\s*(?:==\s*'[^']+'|in\s*\[[^\]]+\])", query.strip()
+        ):
             return None
-        match = re.fullmatch(
-            r"subject\s*(?:==\s*(?P<one>'[^']+')|in\s*\[(?P<many>[^\]]+)\])",
-            query.strip(),
-        )
-        if match is None:
-            return None
-        labels = match["one"] or match["many"]
         return [
-            label.strip().strip("'\"").rsplit("/", maxsplit=1)[-1]
-            for label in labels.split(",")
+            label.rsplit("/", maxsplit=1)[-1] for label in re.findall(r"'([^']+)'", query)
         ]
 
     def _download(self, overwrite: bool = False) -> None:
@@ -120,7 +108,7 @@ class Salter2024Emg2pose(study.Study):
         if subjects is None and self.query is not None:
             LOGGER.warning(
                 "Query %r does not name its subjects, so the whole %s release "
-                "(193 subjects, ~370 h) will be downloaded.",
+                "(193 subjects, ~340 GB) will be downloaded.",
                 self.query,
                 self.NEMAR_DATASET_ID,
             )

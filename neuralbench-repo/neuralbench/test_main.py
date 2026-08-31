@@ -57,7 +57,7 @@ def test_invalid_sequence_targets_are_masked(monkeypatch, grouped: bool) -> None
         data={
             "neuro": torch.tensor([[[2.0], [999.0], [1.0]]]),
             "target": torch.tensor([[[1.0], [-1000.0], [3.0]]]),
-            # The loader emits one column per sample, not a flat vector.
+            # The loader emits (B, 1), not (B,).
             "subject_id": torch.tensor([[0]]),
         }
     )

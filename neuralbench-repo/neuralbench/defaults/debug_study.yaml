@@ -58,9 +58,8 @@ Singh2021Timing: "subject in ['Singh2021Timing/PD1025', 'Singh2021Timing/PD1795'
 Levy2026NoninvasiveMeg: "subject_index == 0"
 Levy2026NoninvasiveEeg: "subject_index == 0"
 Sivakumar2024Emg2qwerty: "subject_index < 5"
-# No emg2pose user spans all three paper splits: users are either in-train
-# (train + held-out-stage test) or held out entirely (val, or test). Debug
-# therefore needs one of each -- sub-60 (train/test) and sub-166 (val).
+# No user spans all three splits, so debug needs an in-train subject for
+# train/test (sub-60) and a held-out one for val (sub-166).
 Salter2024Emg2pose: "subject in ['Salter2024Emg2pose/60', 'Salter2024Emg2pose/166']"
 Xu2024Alljoined: "subject_index < 5"
 Xu2025Alljoined: "subject_index < 5"

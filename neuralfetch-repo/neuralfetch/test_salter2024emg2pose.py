@@ -7,7 +7,9 @@
 """Tests for the EMG2Pose BIDS study source."""
 
 import json
+import typing as tp
 from pathlib import Path
+from types import SimpleNamespace
 
 import mne
 import mne_bids
@@ -19,61 +21,54 @@ from neuralfetch.studies.salter2024emg2pose import Salter2024Emg2pose
 
 
 def _make_release(study: Salter2024Emg2pose) -> Path:
-    """Write the release layout the study reads: BIDS tree + upstream metadata.
-
-    The NEMAR ``scans.tsv`` carries no split, only the ``source_file`` that
-    joins each recording to ``emg2pose_metadata.csv``.
-    """
+    """Write a one-recording BIDS tree plus the upstream metadata table."""
     root = study.path / "download" / study.NEMAR_DATASET_ID
-    emg_dir = root / "sub-01" / "ses-01" / "emg"
+    emg_dir = root / "sub-01/ses-01/emg"
     emg_dir.mkdir(parents=True)
-    filename = "sub-01_ses-01_task-emg2pose_recording-left_emg.bdf"
-    bdf = emg_dir / filename
+    bdf = emg_dir / "sub-01_ses-01_task-emg2pose_recording-left_emg.bdf"
     bdf.write_bytes(b"BDF")
     (root / "participants.tsv").write_text(
         "participant_id\toriginal_user\nsub-01\tuser-01\n"
     )
-    (root / "sub-01" / "ses-01" / "sub-01_ses-01_scans.tsv").write_text(
-        f"filename\tsource_file\nemg/{filename}\trec-1_left.hdf5\n"
+    (emg_dir.parent / "sub-01_ses-01_scans.tsv").write_text(
+        f"filename\tsource_file\nemg/{bdf.name}\trec-1_left.hdf5\n"
     )
     study.metadata_path.write_text(
         "filename,split,generalization,stage,side\n"
         "rec-1_left,train,none,HandClawGraspFlicks,left\n"
     )
-    bdf.with_name(filename.replace("_emg.bdf", "_events.tsv")).write_text(
-        "onset\tduration\ttrial_type\n0.0\t10.0\tstage\n2.0\t3.0\tBAD_IK\n"
-    )
     return bdf
 
 
-def test_emg2pose_bids_event(tmp_path: Path) -> None:
+def test_emg2pose_timeline_joins_upstream_metadata(tmp_path: Path) -> None:
     study = Salter2024Emg2pose(path=tmp_path)
     bdf = _make_release(study)
 
     timeline = next(study.iter_timelines())
     events = study._load_timeline_events(timeline)
 
-    assert timeline["path"] == str(bdf)
-    assert timeline["split"] == "train"
-    assert timeline["generalization"] == "none"
-    assert timeline["stage"] == "HandClawGraspFlicks"
-    assert timeline["user_stage"] == "user-01/HandClawGraspFlicks"
+    assert timeline == {
+        "subject": "01",
+        "session": "01",
+        "task": "emg2pose",
+        "recording": "left",
+        "path": str(bdf),
+        "user": "user-01",
+        "split": "train",
+        "generalization": "none",
+        "stage": "HandClawGraspFlicks",
+        "side": "left",
+        "user_stage": "user-01/HandClawGraspFlicks",
+    }
     assert events[["type", "start"]].to_dict("records") == [
         {"type": "BidsEmg", "start": 0.0}
     ]
-    loader = json.loads(events.iloc[0]["filepath"])
-    assert loader["method"] == "_load_raw"
-    assert loader["timeline"] == timeline
+    assert json.loads(events.iloc[0]["filepath"])["method"] == "_load_raw"
 
-
-def test_emg2pose_missing_metadata_fails_clearly(tmp_path: Path) -> None:
-    """A release without the upstream table must not yield an unlabelled split."""
-    study = Salter2024Emg2pose(path=tmp_path)
-    _make_release(study)
+    # A fresh study, since the first one memoized the table it just read.
     study.metadata_path.unlink()
-
     with pytest.raises(FileNotFoundError, match="emg2pose_metadata.csv"):
-        next(study.iter_timelines())
+        next(Salter2024Emg2pose(path=tmp_path).iter_timelines())
 
 
 def test_emg2pose_marks_bad_ik_targets(
@@ -99,7 +94,7 @@ def test_emg2pose_marks_bad_ik_targets(
     [
         ("subject == 'Salter2024Emg2pose/13'", ["13"]),
         ("subject in ['Salter2024Emg2pose/60', 'Salter2024Emg2pose/166']", ["60", "166"]),
-        # Not a subject selector: the full release is the only safe scope.
+        # Not a subject selector: the whole release is the only safe scope.
         ("timeline_index < 8", None),
         (None, None),
     ],
@@ -110,16 +105,18 @@ def test_emg2pose_download_scope(
     query: str | None,
     expected: list[str] | None,
 ) -> None:
-    captured: dict[str, object] = {}
+    captured: dict[str, tp.Any] = {}
 
-    class Eegdash:
-        def __init__(self, **kwargs: object) -> None:
-            captured["subject"] = kwargs.get("subject")
+    def eegdash(**kwargs: tp.Any) -> SimpleNamespace:
+        captured.update(kwargs)
+        return SimpleNamespace(download=lambda overwrite=False: None)
 
-        def download(self, overwrite: bool = False) -> None:
-            pass
+    monkeypatch.setattr(download, "Eegdash", eegdash)
+    monkeypatch.setattr(
+        download, "download_file", lambda url, _: captured.update(url=url)
+    )
 
-    monkeypatch.setattr(download, "Eegdash", Eegdash)
-    monkeypatch.setattr(download, "download_file", lambda *a, **k: None)
     Salter2024Emg2pose(path=tmp_path, query=query)._download()
+
     assert captured["subject"] == expected
+    assert captured["url"] == Salter2024Emg2pose.METADATA_URL

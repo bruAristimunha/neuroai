@@ -78,9 +78,8 @@ trainer_config:
   n_epochs: 40
 loss:
   name: L1Loss
-# Scalar metrics, not the shared ``get_regression_metric_configs(20)``: with
-# ``num_outputs: 20`` torchmetrics returns one value per joint, which Lightning
-# cannot log or monitor. Averaging over joints is also what the paper reports.
+# Not get_regression_metric_configs(20): num_outputs returns one value per
+# joint, which Lightning cannot log. The paper also reports the joint average.
 metrics:
   - log_name: mae
     name: MeanAbsoluteError

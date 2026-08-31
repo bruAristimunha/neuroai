@@ -173,7 +173,7 @@ class BrainModule(pl.LightningModule):
                 raise ValueError("Sequence prediction is longer than its target.")
             # Some models drop left context, so compare their valid tail.
             y_true = y_true[:, -y_pred.shape[1] :]
-            # Metrics see one row per frame, so each frame carries its subject.
+            # Metric rows are frames, not samples: (B, 1) -> (B, T).
             frame_subjects = metric_subjects.reshape(-1, 1).expand(-1, y_pred.shape[1])
             if invalid is not None:
                 assert self.invalid_target is not None

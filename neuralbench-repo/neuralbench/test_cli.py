@@ -202,7 +202,6 @@ def test_emg_pose_task_uses_degree_targets() -> None:
 
 
 def test_emg_pose_debug_spans_every_split() -> None:
-    """Debug needs an in-train user and a held-out one to get train/val/test."""
     config = ConfDict(load_yaml_config(DEFAULTS_DIR / "config.yaml"))
     grid = ConfDict(load_yaml_config(DEFAULTS_DIR / "grid.yaml"))
     debug_config = prepare_task_configs(
