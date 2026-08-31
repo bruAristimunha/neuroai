@@ -198,3 +198,12 @@ def test_emg_pose_task_uses_degree_targets() -> None:
     target: tp.Any = data.target
 
     assert target.extractor.scale_factor == pytest.approx(180.0 / 3.141592653589793)
+
+
+def test_emg_pose_debug_uses_one_subject() -> None:
+    config = ConfDict(load_yaml_config(DEFAULTS_DIR / "config.yaml"))
+    grid = ConfDict(load_yaml_config(DEFAULTS_DIR / "grid.yaml"))
+    debug_config = prepare_task_configs(
+        config, grid, "emg", "pose", False, True, False, False, False, [None]
+    )[0]
+    assert debug_config["data.study.source.query"] == "subject == '13'"
