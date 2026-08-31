@@ -66,7 +66,7 @@ data:
 brain_model_output_size: &brain_model_output_size 20
 brain_model_config:
   =replace=: true
-  name: NeuroPose
+  name: VEMG2Pose
 trainer_config:
   monitor: val/mae
   mode: min
@@ -74,6 +74,6 @@ trainer_config:
   patience: 7
   n_epochs: 40
 loss:
-  name: MSELoss
+  name: L1Loss
 metrics: !!python/object/apply:neuralbench.defaults.metrics.get_regression_metric_configs
   - *brain_model_output_size

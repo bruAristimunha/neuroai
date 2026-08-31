@@ -21,7 +21,7 @@ stages, and both together.
 # - **CLI**: ``neuralbench emg pose``
 # - **Default dataset**: ``Salter2024Emg2pose`` (16-channel sEMG paired
 #   with motion-capture hand pose).
-# - **Model**: ``NeuroPose``, the paper's regression baseline.
+# - **Model**: ``VEMG2Pose``, the paper's regression baseline.
 # - **Target**: a dense 20-joint angle trajectory for each 5-s window.
 # - **Headline metric key**: ``test/mae`` (degrees).
 #
@@ -37,22 +37,22 @@ stages, and both together.
 # .. code-block:: bash
 #
 #    # 1. Download emg2pose / NM000281
-#    neuralbench emg pose -m neuropose --download
+#    neuralbench emg pose -m vemg2pose --download
 #
 #    # 2. Prepare the preprocessing cache
-#    neuralbench emg pose -m neuropose --prepare
+#    neuralbench emg pose -m vemg2pose --prepare
 #
 #    # 3. Quick local sanity check
-#    neuralbench emg pose -m neuropose --debug
+#    neuralbench emg pose -m vemg2pose --debug
 #
 #    # 4. Full paper regression baseline
-#    neuralbench emg pose -m neuropose
+#    neuralbench emg pose -m vemg2pose
 
 # %%
 # Scope and data handling
 # -----------------------
 #
-# NeuralBench implements the paper's ``regression_neuropose`` setting.
+# NeuralBench implements the paper's ``regression_vemg2pose`` setting.
 # The autoregressive tracking setting, which also conditions on an initial
 # pose and previous predictions, is outside this task's scope.
 #

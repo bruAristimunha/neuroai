@@ -155,13 +155,11 @@ def _build_emg2qwerty() -> "torch.nn.Module":
     )
 
 
-def _build_neuropose() -> "torch.nn.Module":
+def _build_vemg2pose() -> "torch.nn.Module":
     import braindecode.models as bdm
 
     # 16 EMG channels at 2 kHz over the paper's 5 s evaluation window.
-    # ``final_layer`` is the per-frame joint-angle head and is subtracted
-    # to report the backbone count.
-    return bdm.NeuroPose(
+    return bdm.VEMG2Pose(
         n_chans=16,
         n_times=10000,
         n_outputs=20,
@@ -490,14 +488,14 @@ MODELS: list[ModelEntry] = [
     ),
     # Task-specific EMG model (emg/pose regression task).
     ModelEntry(
-        name="NeuroPose",
+        name="VEMG2Pose",
         family="classic",
         device="emg",
-        year=2021,
-        bibtex="liu2021neuropose",
-        config_name="NeuroPose",
-        cli_name="neuropose",
-        builder=_build_neuropose,
+        year=2024,
+        bibtex="salter2024emg2pose",
+        config_name="VEMG2Pose",
+        cli_name="vemg2pose",
+        builder=_build_vemg2pose,
         backbone_subtract=("final_layer",),
     ),
     # fMRI baselines (kept in the registry to feed FMRI_CLASSIC_DISPLAY and

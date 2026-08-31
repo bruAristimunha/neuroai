@@ -98,7 +98,7 @@ NeuralBench, using publicly available reference datasets.
 #      - 68.04 +/- 0.73
 #      - 134.89 +/- 2.02
 #      - --
-#    * - NeuroPose
+#    * - VEMG2Pose
 #      - --
 #      - --
 #      - --

@@ -18,10 +18,10 @@ Usage
 .. code-block:: bash
 
    # Download the NM000281 release
-   neuralbench emg pose -m neuropose --download
+   neuralbench emg pose -m vemg2pose --download
 
    # Full paper configuration
-   neuralbench emg pose -m neuropose
+   neuralbench emg pose -m vemg2pose
 
 .. dropdown:: Show ``config.yaml``
 
@@ -37,7 +37,7 @@ participants, 370 hours and 29 movement stages, with 2 kHz sEMG paired with
 tracked joint angles. Each 5-s window is mapped to the 20-joint trajectory
 in degrees, the unit used for the paper's reported angular error.
 
-This is the paper's **regression** setting (``regression_neuropose``), a plain
+This is the paper's **regression** setting (``regression_vemg2pose``), a plain
 sequence-to-sequence map.  Its **tracking** setting is not implemented: that
 one feeds in the initial pose and conditions on the previous state at each
 step, which is a model-side change rather than a configuration one.

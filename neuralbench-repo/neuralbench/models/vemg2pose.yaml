@@ -4,7 +4,7 @@
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
 
-# NeuroPose (Liu, Zhang & Gowda, WWW 2021).
+# VEMG2Pose (Salter et al., NeurIPS 2024), emg2pose's regression baseline.
 brain_model_config:
   =replace=: true
-  name: NeuroPose
+  name: VEMG2Pose
