@@ -55,6 +55,8 @@ stages, and both together.
 # NeuralBench implements the paper's ``regression_vemg2pose`` setting.
 # The autoregressive tracking setting, which also conditions on an initial
 # pose and previous predictions, is outside this task's scope.
+# ``-m neuropose`` and ``-m sensingdynamics`` select the paper's other two
+# regression baselines.
 #
 # The BIDS release carries the paper split in ``scans.tsv``. ``BAD_IK``
 # events exclude intervals without inverse-kinematics labels, and padded

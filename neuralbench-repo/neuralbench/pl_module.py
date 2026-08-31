@@ -160,6 +160,11 @@ class BrainModule(pl.LightningModule):
 
         metric_pred, metric_true = y_pred, y_true
         if y_pred.ndim == 3 and y_true.ndim == 3:
+            if y_pred.shape[1] > y_true.shape[1]:
+                raise ValueError("Sequence prediction is longer than its target.")
+            # ``BidsEmg`` segments exclude ``BAD_IK`` spans upstream.  Some
+            # models additionally drop left context, so compare their valid tail.
+            y_true = y_true[:, -y_pred.shape[1] :]
             metric_pred = y_pred.reshape(-1, y_pred.shape[-1])
             metric_true = y_true.reshape(-1, y_true.shape[-1])
             y_pred = y_pred.reshape(y_pred.shape[0], -1)
