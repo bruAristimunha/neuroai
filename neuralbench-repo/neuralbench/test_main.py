@@ -18,6 +18,7 @@ from torch import nn
 from torch.utils.data import DataLoader
 
 from neuraltrain.losses import BaseLoss
+from neuraltrain.metrics.metrics import GroupedMetric
 from neuraltrain.models.base import BaseModelConfig
 from neuraltrain.optimizers import LightningOptimizer
 
@@ -38,11 +39,15 @@ class _DummyBrainModule:
         self.kwargs = kwargs
 
 
-def test_invalid_sequence_targets_are_masked(monkeypatch) -> None:
+@pytest.mark.parametrize("grouped", [False, True])
+def test_invalid_sequence_targets_are_masked(monkeypatch, grouped: bool) -> None:
+    metrics: dict[str, tp.Any] = {}
+    if grouped:
+        metrics["val/mae"] = GroupedMetric(metric_name="MeanAbsoluteError")
     module = BrainModule(
         model=nn.Identity(),
         loss=nn.L1Loss(),
-        metrics={},
+        metrics=metrics,
         lightning_optimizer_config=tp.cast(LightningOptimizer, object()),
         invalid_target=-1000.0,
     )
@@ -52,7 +57,8 @@ def test_invalid_sequence_targets_are_masked(monkeypatch) -> None:
         data={
             "neuro": torch.tensor([[[2.0], [999.0], [1.0]]]),
             "target": torch.tensor([[[1.0], [-1000.0], [3.0]]]),
-            "subject_id": torch.tensor([0]),
+            # The loader emits one column per sample, not a flat vector.
+            "subject_id": torch.tensor([[0]]),
         }
     )
 

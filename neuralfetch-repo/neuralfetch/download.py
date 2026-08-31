@@ -895,18 +895,21 @@ class Eegdash(BaseDownload):
         Root directory for the study.
     database : str
         EEGDash database to query (``"eegdash"``, ``"eegdash_staging"``, …).
+    subject : str | list[str] | None
+        Restrict the download to these BIDS subject labels; ``None`` fetches
+        the whole dataset. A list is sent to eegdash as an ``$in`` filter.
     """
 
     requirements: tp.ClassVar[tuple[str, ...]] = ("eegdash>=0.8.2",)
     database: str = "eegdash"
-    subject: str | None = None
+    subject: str | list[str] | None = None
 
     def _download(self, overwrite: bool = False) -> None:
         # ``overwrite`` is best-effort: eegdash's client manages its own cache
         # and refetches missing recordings on demand.
         from eegdash import EEGDashDataset  # type: ignore[import-not-found]
 
-        kwargs = {}
+        kwargs: dict[str, tp.Any] = {}
         if self.subject is not None:
             kwargs["subject"] = self.subject
         EEGDashDataset(

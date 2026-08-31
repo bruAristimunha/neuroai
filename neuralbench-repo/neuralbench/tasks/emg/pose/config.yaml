@@ -78,5 +78,15 @@ trainer_config:
   n_epochs: 40
 loss:
   name: L1Loss
-metrics: !!python/object/apply:neuralbench.defaults.metrics.get_regression_metric_configs
-  - *brain_model_output_size
+# Scalar metrics, not the shared ``get_regression_metric_configs(20)``: with
+# ``num_outputs: 20`` torchmetrics returns one value per joint, which Lightning
+# cannot log or monitor. Averaging over joints is also what the paper reports.
+metrics:
+  - log_name: mae
+    name: MeanAbsoluteError
+  - log_name: rmse
+    name: MeanSquaredError
+    kwargs:
+      squared: false
+  - log_name: r2_score
+    name: R2Score

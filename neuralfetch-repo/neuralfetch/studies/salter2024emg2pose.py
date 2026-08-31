@@ -8,7 +8,7 @@
 
 from __future__ import annotations
 
-import json
+import logging
 import re
 import typing as tp
 from pathlib import Path
@@ -23,14 +23,19 @@ from neuralfetch import download
 from neuralfetch.bids import BidsEmg  # noqa: F401
 from neuralset.events import study
 
+LOGGER = logging.getLogger(__name__)
+
 
 class Salter2024Emg2pose(study.Study):
     """emg2pose (Meta Reality Labs, NeurIPS 2024) -- surface-EMG hand pose.
 
     Notes
     -----
-    The paper's train/val/test and generalization assignments are stored with
-    each recording in BIDS ``scans.tsv`` files.
+    The NEMAR release carries no split assignment: its ``scans.tsv`` files only
+    describe each recording (``stage``, ``side``, ``source_file``). The paper's
+    ``split`` and ``generalization`` labels live in the upstream release's
+    ``emg2pose_metadata.csv``, which :meth:`_download` fetches alongside the
+    BIDS tree and which is joined per recording on ``source_file``.
 
     Invalid inverse-kinematics samples are marked in the target channels with
     ``-1000`` so downstream losses and predictions can mask them.
@@ -70,19 +75,62 @@ class Salter2024Emg2pose(study.Study):
     NEMAR_DATASET_ID: tp.ClassVar[str] = "nm000281"
     IK_ANNOTATION: tp.ClassVar[str] = "BAD_IK"
     INVALID_TARGET: tp.ClassVar[float] = -1000.0
+    METADATA_URL: tp.ClassVar[str] = (
+        "https://fb-ctrl-oss.s3.amazonaws.com/emg2pose/emg2pose_metadata.csv"
+    )
+    METADATA_FIELDS: tp.ClassVar[tuple[str, ...]] = (
+        "split",
+        "generalization",
+        "stage",
+        "side",
+    )
     aliases: tp.ClassVar[tuple[str, ...]] = ("emg2pose", "nm000281")
     _participant_users_cache: dict[str, str] | None = pydantic.PrivateAttr(default=None)
-    _scan_metadata_cache: dict[Path, dict[str, dict[str, str]]] = pydantic.PrivateAttr(
+    _recording_metadata_cache: dict[str, dict[str, str]] | None = pydantic.PrivateAttr(
+        default=None
+    )
+    _source_file_cache: dict[Path, dict[str, str]] = pydantic.PrivateAttr(
         default_factory=dict
     )
 
+    @staticmethod
+    def _query_subjects(query: str | None) -> list[str] | None:
+        """Return the subject labels a subject-only query selects, else ``None``.
+
+        Scoping the download to a subset is only safe when the query names its
+        subjects outright; any other query has to fall back to the whole
+        release, so it must be distinguishable from "no query at all".
+        """
+        if query is None:
+            return None
+        match = re.fullmatch(
+            r"subject\s*(?:==\s*(?P<one>'[^']+')|in\s*\[(?P<many>[^\]]+)\])",
+            query.strip(),
+        )
+        if match is None:
+            return None
+        labels = match["one"] or match["many"]
+        return [
+            label.strip().strip("'\"").rsplit("/", maxsplit=1)[-1]
+            for label in labels.split(",")
+        ]
+
     def _download(self, overwrite: bool = False) -> None:
-        match = re.fullmatch(r"subject == '([^']+)'", self.query or "")
+        subjects = self._query_subjects(self.query)
+        if subjects is None and self.query is not None:
+            LOGGER.warning(
+                "Query %r does not name its subjects, so the whole %s release "
+                "(193 subjects, ~370 h) will be downloaded.",
+                self.query,
+                self.NEMAR_DATASET_ID,
+            )
         download.Eegdash(
             study=self.NEMAR_DATASET_ID,
             dset_dir=self.path,
-            subject=match.group(1).rsplit("/", maxsplit=1)[-1] if match else None,
+            subject=subjects,
         ).download(overwrite=overwrite)
+        if overwrite or not self.metadata_path.is_file():
+            download.download_file(self.METADATA_URL, self.metadata_path)
 
     @property
     def bids_root(self) -> Path:
@@ -112,8 +160,31 @@ class Salter2024Emg2pose(study.Study):
         }
         return self._participant_users_cache
 
-    def _scan_metadata(self, bids_path: mne_bids.BIDSPath) -> dict[str, str]:
-        """Return the paper split metadata for one BIDS recording."""
+    @property
+    def metadata_path(self) -> Path:
+        """Return the upstream metadata table holding the paper's splits."""
+        return self.path / "emg2pose_metadata.csv"
+
+    @property
+    def recording_metadata(self) -> dict[str, dict[str, str]]:
+        """Map upstream recording names to their paper split and description."""
+        if self._recording_metadata_cache is None:
+            if not self.metadata_path.is_file():
+                raise FileNotFoundError(
+                    f"{self.metadata_path} is missing. The NEMAR release does not "
+                    "carry the paper's train/val/test assignment; run "
+                    f"Study.download() to fetch it from {self.METADATA_URL}."
+                )
+            table = pd.read_csv(
+                self.metadata_path, usecols=["filename", *self.METADATA_FIELDS]
+            ).set_index("filename")
+            self._recording_metadata_cache = tp.cast(
+                dict[str, dict[str, str]], table.to_dict("index")
+            )
+        return self._recording_metadata_cache
+
+    def _source_file(self, bids_path: mne_bids.BIDSPath) -> str:
+        """Return the upstream recording name one BIDS file was converted from."""
         scans = mne_bids.BIDSPath(
             root=bids_path.root,
             subject=bids_path.subject,
@@ -121,28 +192,23 @@ class Salter2024Emg2pose(study.Study):
             suffix="scans",
             extension=".tsv",
         ).fpath
-        if scans not in self._scan_metadata_cache:
+        if scans not in self._source_file_cache:
             table = pd.read_csv(scans, sep="\t").set_index("filename")
-            self._scan_metadata_cache[scans] = tp.cast(
-                dict[str, dict[str, str]],
-                table[["split", "generalization"]].to_dict("index"),
+            self._source_file_cache[scans] = tp.cast(
+                dict[str, str], table["source_file"].to_dict()
             )
-        return self._scan_metadata_cache[scans][
+        name = self._source_file_cache[scans][
             f"{bids_path.datatype}/{bids_path.fpath.name}"
         ]
+        return name.removesuffix(".hdf5")
 
     def iter_timelines(self) -> tp.Iterator[dict[str, tp.Any]]:
         """Yield recordings from BIDS entities, never parsed file names."""
         for bids_path in mne_bids.find_matching_paths(
             root=self.bids_root, datatypes="emg", extensions=".bdf"
         ):
-            sidecar_path = bids_path.fpath.with_suffix(".json")
-            sidecar = (
-                json.loads(sidecar_path.read_text()) if sidecar_path.is_file() else {}
-            )
-            subject = bids_path.subject
-            user = self.participant_users.get(subject, subject)
-            stage = sidecar.get("Stage")
+            user = self.participant_users.get(bids_path.subject, bids_path.subject)
+            metadata = self.recording_metadata[self._source_file(bids_path)]
             values = {
                 "subject": bids_path.subject,
                 "session": bids_path.session,
@@ -151,12 +217,10 @@ class Salter2024Emg2pose(study.Study):
                 "recording": bids_path.recording,
                 "path": str(bids_path.fpath),
                 "user": user,
-                "stage": stage,
-                "side": sidecar.get("HandSide") or bids_path.recording,
+                **{field: metadata[field] for field in self.METADATA_FIELDS},
             }
             timeline = {key: value for key, value in values.items() if value is not None}
-            timeline["user_stage"] = f"{user}/{stage}" if stage else user
-            timeline.update(self._scan_metadata(bids_path))
+            timeline["user_stage"] = f"{user}/{metadata['stage']}"
             yield timeline
 
     def _load_timeline_events(self, timeline: dict[str, tp.Any]) -> pd.DataFrame:

@@ -58,10 +58,11 @@ stages, and both together.
 # ``-m neuropose`` and ``-m sensingdynamics`` select the paper's other two
 # regression baselines.
 #
-# The BIDS release carries the paper split in ``scans.tsv``. ``BAD_IK``
-# events exclude intervals without inverse-kinematics labels, and padded
-# recording tails are not segmented into training windows. Joint angles are
-# converted from radians to degrees before loss and metric computation.
+# The paper split is fetched from the upstream ``emg2pose_metadata.csv`` and
+# joined to the BIDS recordings, since the NEMAR release does not carry it.
+# ``BAD_IK`` events exclude intervals without inverse-kinematics labels, and
+# padded recording tails are not segmented into training windows. Joint angles
+# are converted from radians to degrees before loss and metric computation.
 #
 # .. warning::
 #

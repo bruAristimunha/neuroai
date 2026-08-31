@@ -163,6 +163,7 @@ def _build_vemg2pose() -> "torch.nn.Module":
         n_chans=16,
         n_times=10000,
         n_outputs=20,
+        sfreq=2000.0,
     )
 
 
