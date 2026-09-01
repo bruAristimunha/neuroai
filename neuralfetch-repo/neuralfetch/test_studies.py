@@ -224,14 +224,14 @@ def test_gifford_split_isolation() -> None:
 def test_reichert2020_impact_eeg_layout() -> None:
     """Reichert2020Impact._load_raw must produce a trial-major EEG layout.
 
-    Regression test for the MOABB BNCI2020_002 reshape bug. MOABB's
-    ``_convert_attention_shift`` calls ``bciexp.data.reshape(n_channels,
-    -1)`` on an F-contiguous ``(n_channels, n_samples, n_trials)`` array,
-    which produces a trial-fastest interleaved layout. Our
-    ``Reichert2020Impact._load_raw`` override re-applies the correct
-    ``transpose(0, 2, 1).reshape(...)`` so that, for any trial *t* and
-    sample *s*, ``raw._data[c, t * n_samples + s]`` equals
-    ``bciexp.data[c, s, t] * 1e-6`` (uV -> V).
+    MOABB's ``_convert_attention_shift`` used to call
+    ``bciexp.data.reshape(n_channels, -1)`` on an F-contiguous
+    ``(n_channels, n_samples, n_trials)`` array, producing a trial-fastest
+    interleaved layout.  MOABB >= 1.6.0 applies the correct
+    ``transpose(0, 2, 1).reshape(...)`` itself, so this is now a guard
+    against an upstream regression rather than a check on a local patch:
+    for any trial *t* and sample *s*, ``raw._data[c, t * n_samples + s]``
+    must equal ``bciexp.data[c, s, t] * 1e-6`` (uV -> V).
     """
     try:
         folder = utils.root_study_folder()
@@ -242,7 +242,12 @@ def test_reichert2020_impact_eeg_layout() -> None:
 
     timeline = {"subject": 1, "session": "0", "run": "0"}
     study = Reichert2020Impact(path=folder)
-    mat_path = study._mat_path(timeline)  # noqa: SLF001
+    # _mat_path now asks MOABB to resolve the file, which fetches it if absent;
+    # off-cluster or offline that raises rather than returning a missing path.
+    try:
+        mat_path = study._mat_path(timeline)  # noqa: SLF001
+    except Exception as exc:  # noqa: BLE001 - any resolution failure means "no data here"
+        pytest.skip(f"Reichert2020Impact data unavailable: {exc}")
     if not mat_path.exists():
         pytest.skip(f"Reichert2020Impact data not downloaded at {mat_path}")
 
