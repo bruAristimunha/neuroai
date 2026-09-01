@@ -8,15 +8,15 @@
 # NEMAR NM000281), following the paper's regression setting.
 
 data:
-  batch_size: 16
+  batch_size: 64
   study:
     source:
       name: Salter2024Emg2pose
-    # 21 of the 25253 recordings are shorter than the 5-s window below, which
-    # leaves the segmenter no window to cut and aborts the run.
+    # Recordings shorter than the longest window (VEMG2Pose's 5.895 s) leave the
+    # segmenter nothing to cut; filtering here keeps every model on one set.
     drop_recordings_shorter_than_a_window:
       name: QueryEvents
-      query: "duration >= 5.0"
+      query: "duration >= 5.895"
     split:
       name: PredefinedSplit
       event_type: Emg
@@ -85,8 +85,22 @@ trainer_config:
   monitor: val/mae
   mode: min
   strategy: auto
-  patience: 7
-  n_epochs: 40
+  # emg2pose allows 500 epochs with patience 50; capped to fit SLURM's 2-day
+  # limit at roughly 0.3 h/epoch.
+  patience: 20
+  n_epochs: 100
+  gradient_clip_val: 0
+  # The Rich bar buffers its writes, leaving the log silent for a whole epoch;
+  # per-epoch lines still land without it.
+  enable_progress_bar: false
+# emg2pose holds the learning rate at 1e-3 (config/experiment/regression_*.yaml)
+# where the neuralbench default anneals a 10x smaller one through OneCycleLR.
+lightning_optimizer_config:
+  =replace=: true
+  optimizer:
+    name: Adam
+    lr: 1.0e-3
+  scheduler: null
 loss:
   name: L1Loss
 # Not get_regression_metric_configs(20): num_outputs returns one value per
