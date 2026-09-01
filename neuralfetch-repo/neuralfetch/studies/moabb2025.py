@@ -124,7 +124,7 @@ def find_dataset_in_moabb(
 class _BaseMoabb(studies.Study):
     _dataset_kwargs: tp.ClassVar[dict[str, tp.Any]] = {}
     event_id: tp.ClassVar[dict[str, tp.Any]] = {}
-    requirements: tp.ClassVar[tuple[str, ...]] = ("moabb>=1.7.0",)
+    requirements: tp.ClassVar[tuple[str, ...]] = ("moabb>=1.7.1",)
 
     def _rename_numeric_descriptions(self, events_df: pd.DataFrame) -> None:
         """Auto-rename numeric descriptions inferred from event_id keys.
@@ -2053,7 +2053,7 @@ class Lee2019EegErp(_BaseMoabb):
         num_subjects=54,
         num_events_in_query=1981,
         event_types_in_query={"Eeg", "Stimulus"},
-        data_shape=(62, 1143560),
+        data_shape=(62, 1005560),
         frequency=1000.0,
     )
 
@@ -2090,7 +2090,7 @@ class Lee2019EegMi(_BaseMoabb):
         num_subjects=54,
         num_events_in_query=101,
         event_types_in_query={"Eeg", "Stimulus"},
-        data_shape=(62, 1519160),
+        data_shape=(62, 1418040),
         frequency=1000.0,
     )
 
@@ -2127,7 +2127,7 @@ class Lee2019EegSsvep(_BaseMoabb):
         num_subjects=54,
         num_events_in_query=101,
         event_types_in_query={"Eeg", "Stimulus"},
-        data_shape=(62, 1298000),
+        data_shape=(62, 1560080),
         frequency=1000.0,
     )
 
