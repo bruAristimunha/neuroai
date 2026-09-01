@@ -57,6 +57,17 @@ data:
     # Joint labels are radians; report the paper's degree-based metrics.
     scale_factor: 57.29577951308232
     clamp: null
+    # Same cache as the neuro pass above: without it, ``=replace=`` drops the
+    # default target infra and every job re-reads all 25232 recordings.
+    infra:
+      cluster: auto
+      folder: !!python/name:neuralbench.config_manager.CACHE_DIR
+      keep_in_ram: true
+      slurm_partition: !!python/name:neuralbench.config_manager.SLURM_PARTITION
+      timeout_min: 180
+      gpus_per_node: 1
+      cpus_per_task: 10
+      min_samples_per_job: 200
   # 5-s trajectories, the paper's evaluation length.
   trigger_event_type: Emg
   start: 0.0
