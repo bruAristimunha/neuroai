@@ -36,7 +36,7 @@ data:
     scaler: null
     clamp: null
     infra:
-      cluster: auto
+      cluster: !!python/name:neuralbench.config_manager.CLUSTER
       folder: !!python/name:neuralbench.config_manager.CACHE_DIR
       keep_in_ram: true
       slurm_partition: !!python/name:neuralbench.config_manager.SLURM_PARTITION
@@ -60,7 +60,7 @@ data:
     # Same cache as the neuro pass above: without it, ``=replace=`` drops the
     # default target infra and every job re-reads all 25232 recordings.
     infra:
-      cluster: auto
+      cluster: !!python/name:neuralbench.config_manager.CLUSTER
       folder: !!python/name:neuralbench.config_manager.CACHE_DIR
       keep_in_ram: true
       slurm_partition: !!python/name:neuralbench.config_manager.SLURM_PARTITION
