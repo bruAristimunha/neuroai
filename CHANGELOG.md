@@ -4,6 +4,7 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- `neuralbench`: added the `emg pose` task — 20-joint hand-angle trajectory regression on EMG2Pose (NEMAR NM000281), in the paper's regression setting (#229).
 - `neuralfetch`: read EMG2Pose paper split metadata from the BIDS `scans.tsv`, falling back to the upstream `emg2pose_metadata.csv` on NEMAR releases that omit those columns (#229).
 - `neuralset`: `Study.version` is now a top-level field; `infra_timelines` → `timelines.infra` (Step syntax, defaults to `ProcessPool`). Requires exca ≥ 0.5.27. (#194)
 - `neuralset`: fixed `Mne2013Sample`/`Fake2025Meg` re-downloading MNE sample data on `run()` after `download()` (#157).

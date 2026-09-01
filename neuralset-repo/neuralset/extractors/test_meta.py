@@ -59,24 +59,6 @@ def test_time_aggregated_extractor(
         assert out["agg"].shape[1] == out["meg"].shape[1] * n_groups_concat
 
 
-def test_time_major_extractor(test_data_path: Path) -> None:
-    """TimeMajorExtractor exposes a dynamic target as ``(time, channels)``."""
-    events = ns.Study(
-        name="Test2023Meg", path=test_data_path, query="timeline_index<2"
-    ).run()
-    extractor = ns.extractors.MegExtractor(frequency=100.0)
-    time_major = ns.extractors.TimeMajorExtractor(extractor=extractor)
-
-    extractor.prepare(events)
-    timeline_events = events[events["timeline"] == events["timeline"].iloc[0]]
-    channels_by_time = extractor(timeline_events, start=0.0, duration=1.0)
-    output = time_major(timeline_events, start=0.0, duration=1.0)
-
-    assert time_major.frequency == extractor.frequency
-    assert torch.equal(output, channels_by_time.transpose(-1, -2))
-    assert output.is_contiguous()
-
-
 @pytest.mark.parametrize("agg_method", ["mean", "sum", "cat", "stack"])
 def test_aggregated_extractor(
     test_data_path: Path, agg_method: tp.Literal["mean", "sum", "cat", "stack"]

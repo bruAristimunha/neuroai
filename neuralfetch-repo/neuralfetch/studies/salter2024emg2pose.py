@@ -20,7 +20,6 @@ import pandas as pd
 import pydantic
 
 from neuralfetch import download
-from neuralfetch.bids import BidsEmg  # noqa: F401
 from neuralset.events import study
 
 LOGGER = logging.getLogger(__name__)
@@ -36,8 +35,8 @@ class Salter2024Emg2pose(study.Study):
     (upstream ``main`` carries them), so when the columns are absent the labels
     are joined from the upstream ``emg2pose_metadata.csv`` on ``source_file``.
 
-    Invalid inverse-kinematics samples are marked in the target channels with
-    ``-1000`` so downstream losses and predictions can mask them.
+    Samples whose inverse kinematics did not resolve are written as ``NaN`` in
+    the target channels, so a loss or metric that reaches them fails loudly.
     """
 
     bibtex: tp.ClassVar[str] = """
@@ -66,14 +65,13 @@ class Salter2024Emg2pose(study.Study):
         num_timelines=25253,
         num_subjects=193,
         num_events_in_query=1,
-        event_types_in_query={"BidsEmg"},
+        event_types_in_query={"Emg"},
         data_shape=(16, 3267),
         frequency=2000,
     )
 
     NEMAR_DATASET_ID: tp.ClassVar[str] = "nm000281"
     IK_ANNOTATION: tp.ClassVar[str] = "BAD_IK"
-    INVALID_TARGET: tp.ClassVar[float] = -1000.0
     METADATA_URL: tp.ClassVar[str] = (
         "https://fb-ctrl-oss.s3.amazonaws.com/emg2pose/emg2pose_metadata.csv"
     )
@@ -222,10 +220,10 @@ class Salter2024Emg2pose(study.Study):
 
     def _load_timeline_events(self, timeline: dict[str, tp.Any]) -> pd.DataFrame:
         filepath = study.SpecialLoader(method=self._load_raw, timeline=timeline).to_json()
-        return pd.DataFrame([dict(type="BidsEmg", filepath=filepath, start=0.0)])
+        return pd.DataFrame([dict(type="Emg", filepath=filepath, start=0.0)])
 
     def _load_raw(self, timeline: dict[str, tp.Any]) -> mne.io.BaseRaw:
-        """Load one recording and mark targets without valid IK."""
+        """Load one recording and blank the targets whose IK did not resolve."""
         raw = mne_bids.read_raw_bids(
             mne_bids.get_bids_path_from_fname(timeline["path"]), verbose=False
         ).load_data()
@@ -252,7 +250,5 @@ class Salter2024Emg2pose(study.Study):
             )
             invalid[max(0, start) : min(raw.n_times, stop)] = True
         if invalid.any():
-            raw.apply_function(
-                lambda data: np.where(invalid, self.INVALID_TARGET, data), picks="misc"
-            )
+            raw.apply_function(lambda data: np.where(invalid, np.nan, data), picks="misc")
         return raw

@@ -245,7 +245,6 @@ Extractors — Meta
    ExtractorPCA
    HuggingFacePCA
    TimeAggregatedExtractor
-   TimeMajorExtractor
    ToStatic
 
 DataLoader

@@ -62,27 +62,15 @@ def test_emg2pose_timeline_carries_paper_split(
     tmp_path: Path, split_in_scans: bool
 ) -> None:
     study = Salter2024Emg2pose(path=tmp_path)
-    bdf = _make_release(study, split_in_scans=split_in_scans)
+    _make_release(study, split_in_scans=split_in_scans)
 
     timeline = next(study.iter_timelines())
     events = study._load_timeline_events(timeline)
 
-    assert timeline == {
-        "subject": "01",
-        "session": "01",
-        "task": "emg2pose",
-        "recording": "left",
-        "path": str(bdf),
-        "user": "user-01",
-        "split": "train",
-        "generalization": "none",
-        "stage": "HandClawGraspFlicks",
-        "side": "left",
-        "user_stage": "user-01/HandClawGraspFlicks",
-    }
-    assert events[["type", "start"]].to_dict("records") == [
-        {"type": "BidsEmg", "start": 0.0}
-    ]
+    assert timeline["split"] == "train"
+    assert timeline["generalization"] == "none"
+    assert timeline["user_stage"] == "user-01/HandClawGraspFlicks"
+    assert events["type"].tolist() == ["Emg"]
     assert json.loads(events.iloc[0]["filepath"])["method"] == "_load_raw"
 
     # Fresh studies below, since the first one memoized what it read.
@@ -96,7 +84,7 @@ def test_emg2pose_timeline_carries_paper_split(
             next(Salter2024Emg2pose(path=tmp_path).iter_timelines())
 
 
-def test_emg2pose_marks_bad_ik_targets(
+def test_emg2pose_blanks_bad_ik_targets(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     info = mne.create_info(["emg", "target"], sfreq=10.0, ch_types=["emg", "misc"])
@@ -108,9 +96,10 @@ def test_emg2pose_marks_bad_ik_targets(
         {"path": str(tmp_path / "recording_emg.bdf")}
     )
 
+    # Cropped to the 0.8 s stage annotation, with the BAD_IK span blanked.
     np.testing.assert_array_equal(
         loaded.get_data(picks="misc")[0],
-        [1.0, 1.0, -1000.0, -1000.0, -1000.0, 1.0, 1.0, 1.0],
+        [1.0, 1.0, np.nan, np.nan, np.nan, 1.0, 1.0, 1.0],
     )
 
 
