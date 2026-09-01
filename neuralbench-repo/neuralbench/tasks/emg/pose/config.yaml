@@ -12,6 +12,11 @@ data:
   study:
     source:
       name: Salter2024Emg2pose
+    # 21 of the 25253 recordings are shorter than the 5-s window below, which
+    # leaves the segmenter no window to cut and aborts the run.
+    drop_recordings_shorter_than_a_window:
+      name: QueryEvents
+      query: "duration >= 5.0"
     split:
       name: PredefinedSplit
       event_type: Emg
