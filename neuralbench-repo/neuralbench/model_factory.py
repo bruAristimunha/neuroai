@@ -152,11 +152,15 @@ def build_brain_model(
         leaf is not None and not hasattr(leaf, "n_classes") and hasattr(leaf, "extractor")
     ):
         leaf = leaf.extractor
-    n_outputs = (
-        leaf.n_classes
-        if leaf is not None and hasattr(leaf, "n_classes")
-        else feat.shape[-1]
-    )
+    if leaf is not None and hasattr(leaf, "n_classes"):
+        n_outputs = leaf.n_classes
+    elif feat.ndim == 3 and feat.shape[1] > 1:
+        # A dense target keeps the extractor's channel-major ``(B, C, T)``
+        # layout, so the head is as wide as its channel axis; ``_run_step``
+        # transposes it to meet a time-major prediction.
+        n_outputs = feat.shape[1]
+    else:
+        n_outputs = feat.shape[-1]
 
     # Derive sampling rate / channel names from the neuro extractor so models
     # that need them (frequency: Green/FreqBandNet/CoSpectra; ch_names:

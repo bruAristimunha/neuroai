@@ -56,7 +56,7 @@ def build_data(
     """Factory fixture that builds a tiny ``Data`` over the ``Test2024Eeg`` study.
 
     Returns a callable so each test can vary ``seed`` (and optionally
-    ``sampler``) without re-threading the study path or the
+    ``sampler`` or ``target``) without re-threading the study path or the
     rest of the config.  ``event_field="subject"`` keeps all 3 subjects in
     the train split so ``compute_class_weights_from_dataset`` sees no
     class-index gaps -- a quiet workaround for a separate latent bug.
@@ -66,6 +66,7 @@ def build_data(
         *,
         seed: int | None,
         sampler: tp.Any | None = None,
+        target: dict[str, tp.Any] | None = None,
     ) -> Data:
         config: tp.Any = dict(
             study={
@@ -73,7 +74,8 @@ def build_data(
                 "path": test2024eeg_path,
             },
             neuro={"name": "MneRaw", "event_types": "Eeg"},
-            target={
+            target=target
+            or {
                 "name": "LabelEncoder",
                 "event_field": "subject",
                 "event_types": "Word",
