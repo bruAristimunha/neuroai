@@ -39,11 +39,7 @@ class _DummyBrainModule:
         self.kwargs = kwargs
 
 
-@pytest.mark.parametrize("grouped", [False, True])
-def test_unlabelled_sequence_frames_are_masked(monkeypatch, grouped: bool) -> None:
-    metrics: dict[str, tp.Any] = {}
-    if grouped:
-        metrics["val/mae"] = GroupedMetric(metric_name="MeanAbsoluteError")
+def _sequence_module(monkeypatch, metrics: dict[str, tp.Any]) -> BrainModule:
     module = BrainModule(
         model=nn.Identity(),
         loss=nn.L1Loss(),
@@ -52,6 +48,15 @@ def test_unlabelled_sequence_frames_are_masked(monkeypatch, grouped: bool) -> No
     )
     module._trainer = SimpleNamespace(world_size=1)  # type: ignore[assignment]
     monkeypatch.setattr(module, "log", lambda *args, **kwargs: None)
+    return module
+
+
+@pytest.mark.parametrize("grouped", [False, True])
+def test_unlabelled_sequence_frames_are_masked(monkeypatch, grouped: bool) -> None:
+    metrics: dict[str, tp.Any] = {}
+    if grouped:
+        metrics["val/mae"] = GroupedMetric(metric_name="MeanAbsoluteError")
+    module = _sequence_module(monkeypatch, metrics)
     nan = float("nan")
     batch = SimpleNamespace(
         data={
@@ -70,6 +75,22 @@ def test_unlabelled_sequence_frames_are_masked(monkeypatch, grouped: bool) -> No
 
     assert loss.item() == 1.5, "the unlabelled frame contributes nothing"
     assert prediction[0].isnan().tolist() == [False, False, True, True, False, False]
+
+
+def test_sequence_target_wider_than_prediction_is_reported(monkeypatch) -> None:
+    module = _sequence_module(monkeypatch, {})
+    batch = SimpleNamespace(
+        data={
+            # Identity model, so the prediction is (B, T=3, C=2) against a
+            # target whose channel axis is 3 rather than 2.
+            "neuro": torch.zeros(1, 3, 2),
+            "target": torch.zeros(1, 3, 3),
+            "subject_id": torch.tensor([[0]]),
+        }
+    )
+
+    with pytest.raises(ValueError, match="2 outputs per frame but its target 3"):
+        module._run_step(tp.cast(tp.Any, batch), step_name="val", batch_idx=0)
 
 
 def _make_experiment_with_capturing_build(

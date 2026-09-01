@@ -165,6 +165,12 @@ class BrainModule(pl.LightningModule):
             # A dense prediction is time-major (B, T, C) -- braindecode's
             # convention -- while an extracted target is channel-major (B, C, T).
             y_true = y_true.transpose(1, 2)
+            if y_pred.shape[-1] != y_true.shape[-1]:
+                raise ValueError(
+                    f"Prediction carries {y_pred.shape[-1]} outputs per frame but "
+                    f"its target {y_true.shape[-1]}; the head is sized from the "
+                    f"target's channel axis in build_brain_model."
+                )
             if y_pred.shape[1] > y_true.shape[1]:
                 raise ValueError(
                     f"Prediction spans {y_pred.shape[1]} frames but its target "
