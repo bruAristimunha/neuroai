@@ -38,7 +38,9 @@ data:
     infra:
       cluster: !!python/name:neuralbench.config_manager.CLUSTER
       folder: !!python/name:neuralbench.config_manager.CACHE_DIR
-      keep_in_ram: true
+      # exca's RAM cache never evicts, so retaining any of these 25232
+      # recordings grows past 250 GB and the host OOM-kills the run.
+      keep_in_ram: false
       slurm_partition: !!python/name:neuralbench.config_manager.SLURM_PARTITION
       timeout_min: 180
       gpus_per_node: 1
@@ -62,7 +64,7 @@ data:
     infra:
       cluster: !!python/name:neuralbench.config_manager.CLUSTER
       folder: !!python/name:neuralbench.config_manager.CACHE_DIR
-      keep_in_ram: true
+      keep_in_ram: false
       slurm_partition: !!python/name:neuralbench.config_manager.SLURM_PARTITION
       timeout_min: 180
       gpus_per_node: 1
