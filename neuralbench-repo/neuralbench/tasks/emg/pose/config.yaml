@@ -106,6 +106,13 @@ lightning_optimizer_config:
     name: Adam
     lr: 1.0e-3
   scheduler: null
+# emg2pose rotates the 16-electrode band by one position on every training
+# batch (config/transforms/rotation_augmentation.yaml), a single band here.
+augmentation:
+  probability: 1.0
+  num_bands: 1
+  electrodes_per_band: 16
+  band_offsets: [-1, 0, 1]
 loss:
   name: L1Loss
 # Not get_regression_metric_configs(20): num_outputs returns one value per

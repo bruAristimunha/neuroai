@@ -31,6 +31,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 import neuralset as ns
+from neuraltrain.augmentations import BandRotationConfig
 from neuraltrain.losses import BaseLoss
 from neuraltrain.metrics import BaseMetric
 from neuraltrain.models.base import BaseModelConfig
@@ -84,6 +85,7 @@ class Experiment(BaseExperiment):
     trainer_config: TrainerConfig
     loss: BaseLoss
     lightning_optimizer_config: LightningOptimizer
+    augmentation: BandRotationConfig | None = None
 
     # Evaluation
     eval_only: bool = False
@@ -189,6 +191,7 @@ class Experiment(BaseExperiment):
         self._brain_module = BrainModule(
             model=brain_model,
             target_scaler=self.target_scaler,
+            augmentation=None if self.augmentation is None else self.augmentation.build(),
             loss=self.loss.build(**loss_kwargs),
             lightning_optimizer_config=self.lightning_optimizer_config,
             metrics={metric.log_name: metric.build() for metric in self.metrics},

@@ -17,6 +17,7 @@ from exca.cachedict import CacheDict
 from torch import nn
 from torch.utils.data import DataLoader
 
+from neuraltrain.augmentations import BandRotationConfig
 from neuraltrain.losses import BaseLoss
 from neuraltrain.metrics.metrics import GroupedMetric
 from neuraltrain.models.base import BaseModelConfig
@@ -91,6 +92,27 @@ def test_sequence_target_wider_than_prediction_is_reported(monkeypatch) -> None:
 
     with pytest.raises(ValueError, match="2 outputs per frame but its target 3"):
         module._run_step(tp.cast(tp.Any, batch), step_name="val", batch_idx=0)
+
+
+@pytest.mark.parametrize("training", [True, False])
+def test_augmentation_rolls_the_channel_axis_in_training_only(training: bool) -> None:
+    module = BrainModule(
+        model=nn.Identity(),
+        loss=nn.L1Loss(),
+        metrics={},
+        lightning_optimizer_config=tp.cast(LightningOptimizer, object()),
+        augmentation=BandRotationConfig(
+            probability=1.0, num_bands=1, electrodes_per_band=4, band_offsets=(1,)
+        ).build(),
+    )
+    module.train(training)
+    # (B=1, C=4, T=1): a roll of the channel axis reorders this column.
+    neuro = torch.arange(4, dtype=torch.float32)[None, :, None]
+
+    out = module.model_forward(tp.cast(tp.Any, SimpleNamespace(data={"neuro": neuro})))
+
+    expected = [3.0, 0.0, 1.0, 2.0] if training else [0.0, 1.0, 2.0, 3.0]
+    assert out[0, :, 0].tolist() == expected, "augmentation ran on the wrong axis/split"
 
 
 def _make_experiment_with_capturing_build(

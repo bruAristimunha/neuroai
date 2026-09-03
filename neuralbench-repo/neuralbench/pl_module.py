@@ -42,6 +42,8 @@ class BrainModule(pl.LightningModule):
         A dictionary of retrieval metrics to compute on the full test set.
     target_scaler : nn.Module | None, optional
         A scaler to apply to the target values.
+    augmentation : nn.Module | None, optional
+        Augmentation applied to the neuro input during training only.
     """
 
     def __init__(
@@ -53,10 +55,12 @@ class BrainModule(pl.LightningModule):
         test_full_metrics: dict[str, Metric] | None = None,
         test_full_retrieval_metrics: dict[str, Metric] | None = None,
         target_scaler: StandardScaler | None = None,
+        augmentation: nn.Module | None = None,
     ):
         super().__init__()
         self._infer_forward_params(model)
         self.model = model
+        self.augmentation = augmentation
 
         self.loss = loss
         self.target_scaler = target_scaler
@@ -116,7 +120,10 @@ class BrainModule(pl.LightningModule):
         )
 
     def model_forward(self, batch: Batch) -> torch.Tensor:
-        inputs = {self._input_name: batch.data["neuro"]}
+        neuro = batch.data["neuro"]
+        if self.augmentation is not None and self.training:
+            neuro = self.augmentation(neuro)
+        inputs = {self._input_name: neuro}
         if self._requires_subject:
             inputs["subject_ids"] = batch.data["subject_id"]
         if self._requires_channel_positions:
