@@ -30,6 +30,8 @@ import pytest
 import torch
 from torch.utils.data import DataLoader
 
+import neuralset as ns
+
 from .data import Data, get_default_dataloaders
 
 
@@ -161,6 +163,40 @@ def test_per_split_loader_generators_have_distinct_seeds(
     assert len({train_seed, val_seed, test_seed}) == 3, (
         f"Expected three distinct sub-seeds, got "
         f"train={train_seed}, val={val_seed}, test={test_seed}"
+    )
+
+
+def _segments(loaders: dict[str, DataLoader]) -> list[tp.Any]:
+    """Every segment across the three split loaders."""
+    return [s for loader in loaders.values() for s in loader.dataset.segments]  # type: ignore[attr-defined]
+
+
+def test_nonfinite_target_segments_are_dropped(
+    build_data: Callable[..., Data], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target: tp.Any = {"name": "MneRaw", "event_types": "Eeg"}
+    segments = _segments(build_data(seed=7, target=target).prepare())
+    poisoned = set(sorted({s.start for s in segments})[::2])
+
+    extract = ns.extractors.MneRaw._get_timed_array
+
+    def nan_poisoned(
+        self: ns.extractors.MneRaw, event: tp.Any, start: float, duration: float
+    ) -> tp.Any:
+        out = extract(self, event, start, duration)
+        if start in poisoned:
+            out.data = np.full_like(out.data, np.nan)
+        return out
+
+    monkeypatch.setattr(ns.extractors.MneRaw, "_get_timed_array", nan_poisoned)
+    filtered = build_data(
+        seed=7, target=target, drop_nonfinite_target_segments=True
+    ).prepare()
+
+    kept = _segments(filtered)
+    assert not {s.start for s in kept} & poisoned, "kept a segment whose target is NaN"
+    assert len(kept) == len([s for s in segments if s.start not in poisoned]), (
+        "dropped segments whose target is finite"
     )
 
 

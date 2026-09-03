@@ -140,6 +140,33 @@ class RegressionBinSampler(BaseSampler):
         )
 
 
+def _finite_target_mask(
+    dataset: ns.dataloader.SegmentDataset,
+    target: ns.extractors.BaseExtractor,
+    batch_size: int,
+    num_workers: int,
+) -> np.ndarray:
+    """Flag the segments whose target is finite over their whole span."""
+    # Target-only dataset: extracting neuro here as well would double the read.
+    probe = ns.dataloader.SegmentDataset(
+        extractors={"target": target},
+        segments=dataset.segments,
+        pad_duration=dataset.pad_duration,
+    )
+    loader = DataLoader(
+        probe,
+        batch_size=batch_size,
+        collate_fn=probe.collate_fn,
+        num_workers=num_workers,
+        shuffle=False,
+    )
+    finite = [
+        torch.isfinite(batch.data["target"]).flatten(start_dim=1).all(dim=1)
+        for batch in tqdm(loader, desc="Screening targets")
+    ]
+    return torch.cat(finite).numpy()
+
+
 class Data(ns.BaseModel):
     """Create dataloaders for brain-modeling experiments."""
 
@@ -153,6 +180,9 @@ class Data(ns.BaseModel):
     duration: float | None = 3
     stride: float | None = None
     stride_drop_incomplete: bool = True
+    # Targets are NaN wherever the label is invalid (emg/pose IK failures); dropping
+    # those segments trains and scores on clean windows instead of masking frames.
+    drop_nonfinite_target_segments: bool = False
     # Dataloaders
     sampler: BaseSampler | None = None
     batch_size: int = 64
@@ -230,6 +260,17 @@ class Data(ns.BaseModel):
         )
         dataset = segmenter.apply(events)
         dataset.prepare()
+
+        if self.drop_nonfinite_target_segments:
+            finite = _finite_target_mask(
+                dataset, self.target, self.batch_size, self.num_workers
+            )
+            LOGGER.info(
+                "Dropping %d/%d segments with a non-finite target",
+                len(finite) - int(finite.sum()),
+                len(finite),
+            )
+            dataset = dataset.select(finite)
 
         # Derive four independent RNG streams from ``self.seed`` so that each
         # consumer (train DataLoader shuffle + train worker base-seeds, train
