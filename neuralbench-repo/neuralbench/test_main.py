@@ -115,6 +115,26 @@ def test_augmentation_rolls_the_channel_axis_in_training_only(training: bool) ->
     assert out[0, :, 0].tolist() == expected, "augmentation ran on the wrong axis/split"
 
 
+@pytest.mark.parametrize("global_rank", [0, 1])
+def test_only_rank_zero_deletes_the_checkpoint(tmp_path, global_rank: int) -> None:
+    checkpoint = tmp_path / "best.ckpt"
+    checkpoint.touch()
+    # Only the two flags ``_cleanup`` reads; the rest of the config is unused.
+    experiment = Experiment.model_construct(  # type: ignore[call-arg]
+        delete_checkpoints_on_exit=True, eval_only=False
+    )
+    trainer = SimpleNamespace(
+        global_rank=global_rank,
+        checkpoint_callback=SimpleNamespace(best_model_path=str(checkpoint)),
+    )
+
+    experiment._cleanup(tp.cast(tp.Any, trainer))
+
+    assert checkpoint.exists() == (global_rank != 0), (
+        "a non-zero rank must leave the checkpoint for rank zero to test with"
+    )
+
+
 def _make_experiment_with_capturing_build(
     monkeypatch, seed: int
 ) -> tuple[Experiment, list[torch.Tensor]]:
