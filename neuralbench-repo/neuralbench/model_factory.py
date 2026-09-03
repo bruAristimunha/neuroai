@@ -308,7 +308,13 @@ def build_brain_model(
     n_total_params: int = model_summary.total_params
     n_trainable_params: int = model_summary.trainable_params
     if wandb_logger is not None:
-        wandb_logger.experiment.config["n_total_params"] = n_total_params
-        wandb_logger.experiment.config["n_trainable_params"] = n_trainable_params
+        # Not experiment.config[...]: outside rank zero that attribute is a dummy
+        # method, so assigning to it raises TypeError under DDP.
+        wandb_logger.log_hyperparams(
+            {
+                "n_total_params": n_total_params,
+                "n_trainable_params": n_trainable_params,
+            }
+        )
 
     return brain_model, n_total_params, n_trainable_params
