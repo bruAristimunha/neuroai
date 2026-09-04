@@ -9,7 +9,7 @@ import typing as tp
 
 import numpy as np
 import torch
-from pydantic import field_validator
+from pydantic import Field, field_validator
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
@@ -32,7 +32,7 @@ from .transforms import (  # noqa: F401
     TextPreprocessor,
 )
 from .utils import (
-    finite_target_mask,
+    finite_target_fraction,
     make_regression_bin_sampler,
     make_weighted_sampler,
     seed_worker,
@@ -158,9 +158,9 @@ class Data(ns.BaseModel):
     duration: float | None = 3
     stride: float | None = None
     stride_drop_incomplete: bool = True
-    # Targets are NaN wherever the label is invalid (emg/pose IK failures); dropping
-    # those segments trains and scores on clean windows instead of masking frames.
-    drop_nonfinite_target_segments: bool = False
+    # Targets are NaN wherever the label is invalid (emg/pose IK failures). 1.0 drops
+    # any segment holding one, which ``BrainModule`` would otherwise mask frame by frame.
+    min_finite_target_fraction: float | None = Field(default=None, ge=0.0, le=1.0)
     # Dataloaders
     sampler: BaseSampler | None = None
     batch_size: int = 64
@@ -239,16 +239,20 @@ class Data(ns.BaseModel):
         dataset = segmenter.apply(events)
         dataset.prepare()
 
-        if self.drop_nonfinite_target_segments:
-            finite = finite_target_mask(
-                dataset, self.target, self.batch_size, self.num_workers
+        if self.min_finite_target_fraction is not None:
+            keep = (
+                finite_target_fraction(
+                    dataset, self.target, self.batch_size, self.num_workers
+                )
+                >= self.min_finite_target_fraction
             )
             LOGGER.info(
-                "Dropping %d/%d segments with a non-finite target",
-                len(finite) - int(finite.sum()),
-                len(finite),
+                "Dropping %d/%d segments with under %.0f%% of their frames labelled",
+                len(keep) - int(keep.sum()),
+                len(keep),
+                100 * self.min_finite_target_fraction,
             )
-            dataset = dataset.select(finite)
+            dataset = dataset.select(keep)
 
         # Derive four independent RNG streams from ``self.seed`` so that each
         # consumer (train DataLoader shuffle + train worker base-seeds, train

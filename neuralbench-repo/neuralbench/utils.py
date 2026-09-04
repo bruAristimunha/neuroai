@@ -248,13 +248,13 @@ def load_checkpoint(
     return brain_model
 
 
-def finite_target_mask(
+def finite_target_fraction(
     dataset: SegmentDataset,
     target: ns.extractors.BaseExtractor,
     batch_size: int,
     num_workers: int,
 ) -> np.ndarray:
-    """Flag the segments whose target is finite over their whole span."""
+    """Fraction of each segment's target frames that carry a usable label."""
     # Target-only dataset: extracting neuro here as well would double the read.
     probe = SegmentDataset(
         extractors={"target": target},
@@ -270,11 +270,15 @@ def finite_target_mask(
     )
     # Streams instead of reusing ``get_targets_from_dataset``: a dense target
     # (emg/pose: 20 x 11790 floats a segment) will not fit a split in RAM.
-    finite = [
-        torch.isfinite(batch.data["target"]).flatten(start_dim=1).all(dim=1)
-        for batch in tqdm(loader, desc="Screening targets")
-    ]
-    return torch.cat(finite).numpy()
+    fractions = []
+    for batch in tqdm(loader, desc="Screening targets"):
+        finite = torch.isfinite(batch.data["target"])
+        # A frame counts only where every channel resolved, as ``BrainModule``
+        # masks it; a target without a time axis is all-or-nothing.
+        if finite.ndim == 3:
+            finite = finite.all(dim=1)
+        fractions.append(finite.flatten(start_dim=1).float().mean(dim=1))
+    return torch.cat(fractions).numpy()
 
 
 def get_targets_from_dataset(dataset: SegmentDataset) -> torch.Tensor:
