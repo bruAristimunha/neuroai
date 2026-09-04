@@ -31,7 +31,12 @@ from .transforms import (  # noqa: F401
     SklearnSplit,
     TextPreprocessor,
 )
-from .utils import make_regression_bin_sampler, make_weighted_sampler, seed_worker
+from .utils import (
+    finite_target_mask,
+    make_regression_bin_sampler,
+    make_weighted_sampler,
+    seed_worker,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -140,33 +145,6 @@ class RegressionBinSampler(BaseSampler):
         )
 
 
-def _finite_target_mask(
-    dataset: ns.dataloader.SegmentDataset,
-    target: ns.extractors.BaseExtractor,
-    batch_size: int,
-    num_workers: int,
-) -> np.ndarray:
-    """Flag the segments whose target is finite over their whole span."""
-    # Target-only dataset: extracting neuro here as well would double the read.
-    probe = ns.dataloader.SegmentDataset(
-        extractors={"target": target},
-        segments=dataset.segments,
-        pad_duration=dataset.pad_duration,
-    )
-    loader = DataLoader(
-        probe,
-        batch_size=batch_size,
-        collate_fn=probe.collate_fn,
-        num_workers=num_workers,
-        shuffle=False,
-    )
-    finite = [
-        torch.isfinite(batch.data["target"]).flatten(start_dim=1).all(dim=1)
-        for batch in tqdm(loader, desc="Screening targets")
-    ]
-    return torch.cat(finite).numpy()
-
-
 class Data(ns.BaseModel):
     """Create dataloaders for brain-modeling experiments."""
 
@@ -262,7 +240,7 @@ class Data(ns.BaseModel):
         dataset.prepare()
 
         if self.drop_nonfinite_target_segments:
-            finite = _finite_target_mask(
+            finite = finite_target_mask(
                 dataset, self.target, self.batch_size, self.num_workers
             )
             LOGGER.info(

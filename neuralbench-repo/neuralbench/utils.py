@@ -18,6 +18,8 @@ import numpy as np
 import torch
 from sklearn.utils import compute_class_weight
 from torch import nn
+from torch.utils.data import DataLoader
+from tqdm import tqdm
 
 import neuralset as ns
 from neuralset.dataloader import SegmentDataset
@@ -244,6 +246,35 @@ def load_checkpoint(
     logger.info(f"Loaded model hash: {model_hash(brain_model)}")
 
     return brain_model
+
+
+def finite_target_mask(
+    dataset: SegmentDataset,
+    target: ns.extractors.BaseExtractor,
+    batch_size: int,
+    num_workers: int,
+) -> np.ndarray:
+    """Flag the segments whose target is finite over their whole span."""
+    # Target-only dataset: extracting neuro here as well would double the read.
+    probe = SegmentDataset(
+        extractors={"target": target},
+        segments=dataset.segments,
+        pad_duration=dataset.pad_duration,
+    )
+    loader = DataLoader(
+        probe,
+        batch_size=batch_size,
+        collate_fn=probe.collate_fn,
+        num_workers=num_workers,
+        shuffle=False,
+    )
+    # Streams instead of reusing ``get_targets_from_dataset``: a dense target
+    # (emg/pose: 20 x 11790 floats a segment) will not fit a split in RAM.
+    finite = [
+        torch.isfinite(batch.data["target"]).flatten(start_dim=1).all(dim=1)
+        for batch in tqdm(loader, desc="Screening targets")
+    ]
+    return torch.cat(finite).numpy()
 
 
 def get_targets_from_dataset(dataset: SegmentDataset) -> torch.Tensor:
