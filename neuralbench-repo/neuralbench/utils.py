@@ -27,6 +27,8 @@ from neuralset.events import etypes
 from neuralset.extractors import LabelEncoder
 from neuralset.utils import warn_once
 
+from .metrics import _assign_bins
+
 LOGGER = logging.getLogger(__name__)
 
 
@@ -416,17 +418,14 @@ def _compute_regression_bin_weights(
 ) -> torch.Tensor:
     """Compute per-sample inverse-frequency weights from a regression target tensor.
 
-    Targets are bucketised into ``len(bin_edges) - 1`` bins defined by
-    ``bin_edges``.  Bin ``i`` covers ``[bin_edges[i], bin_edges[i + 1])`` for
-    ``i < n_bins - 1``; the top bin is closed on the right
-    (``[bin_edges[-2], bin_edges[-1]]``) so that targets exactly at
-    ``bin_edges[-1]`` (e.g. the cap value in ``AddSleepOnsetTargets``) are
-    counted in the top bin.  This matches the bin semantics of
-    :class:`~neuralbench.metrics.BinnedMAE`.
+    Targets are binned by :func:`~neuralbench.metrics._assign_bins`, so
+    stratification matches :class:`~neuralbench.metrics.BinnedMAE`.
 
     Targets falling outside ``[bin_edges[0], bin_edges[-1]]`` receive a weight
     of ``0`` (they are effectively excluded from sampling) and do not
-    contribute to any bin's count.
+    contribute to any bin's count.  The upper edge itself is in range, which
+    closes the top bin so that targets exactly at ``bin_edges[-1]`` (e.g. the
+    cap value in ``AddSleepOnsetTargets``) are counted there.
 
     Each sample's weight is ``1 / count_in_its_bin`` so that, in expectation,
     every populated bin contributes the same total mass to a weighted sampler.
@@ -452,9 +451,8 @@ def _compute_regression_bin_weights(
             f"bin_edges must have length >= 2, got {len(bin_edges)}: {list(bin_edges)}"
         )
 
-    inner_edges = torch.as_tensor(list(bin_edges)[1:-1], dtype=targets.dtype)
     n_bins = len(bin_edges) - 1
-    bin_idx = torch.bucketize(targets, inner_edges, right=False).clamp_(0, n_bins - 1)
+    bin_idx = _assign_bins(targets, bin_edges)
 
     in_range = (targets >= bin_edges[0]) & (targets <= bin_edges[-1])
     counts = torch.bincount(bin_idx[in_range], minlength=n_bins).to(dtype=torch.float32)
@@ -497,8 +495,7 @@ def make_regression_bin_sampler(
     weights = _compute_regression_bin_weights(targets, bin_edges)
 
     n_bins = len(bin_edges) - 1
-    inner_edges = torch.as_tensor(list(bin_edges)[1:-1], dtype=targets.dtype)
-    bin_idx = torch.bucketize(targets, inner_edges, right=False).clamp_(0, n_bins - 1)
+    bin_idx = _assign_bins(targets, bin_edges)
     in_range = (targets >= bin_edges[0]) & (targets <= bin_edges[-1])
     counts = torch.bincount(bin_idx[in_range], minlength=n_bins).tolist()
     bin_labels = [
