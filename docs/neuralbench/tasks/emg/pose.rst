@@ -34,8 +34,12 @@ Description
 Hand-pose regression from 16-channel surface EMG against the 20 joint angles
 of the UmeTrack hand skeleton [Salter2024]_: 25,253 recordings over 193
 participants, 370 hours and 29 movement stages, with 2 kHz sEMG paired with
-tracked joint angles. Each 5-s window is mapped to the 20-joint trajectory
-in degrees, the unit used for the paper's reported angular error.
+tracked joint angles. Each 5-s window is mapped to the 20-joint trajectory.
+
+Joint angles stay in **radians**, the unit emg2pose trains and logs, so
+``test/mae`` compares directly against its ``AngleMAE``. The paper's Table 4
+reports that same quantity in degrees: multiply by 57.29578, which puts its
+12.2-18.8 degrees at 0.213-0.328 radians.
 
 This is the paper's **regression** setting (``regression_vemg2pose``), a plain
 sequence-to-sequence map.  Its **tracking** setting is not implemented: that
@@ -47,7 +51,8 @@ Dataset Notes
 
 * **IK failures and padding**: BIDS events mark ``BAD_IK`` spans and bound the
   recording before the padded BDF tail. Those spans are blanked to ``NaN`` in
-  the target channels, and excluded from the loss and the metrics.
+  the target channels, and any window overlapping one is dropped from every
+  split -- emg2pose's ``skip_ik_failures``, rather than masking single frames.
 * **Splits**: the paper's ``split`` and ``generalization`` labels are read from
   the session's BIDS ``scans.tsv``. NEMAR tags up to ``v1.0.3`` omit those two
   columns, so for those releases the labels are joined from the upstream

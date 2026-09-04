@@ -27,7 +27,7 @@ The competition is organised as **four tracks**:
    absolute error in seconds** (lower is better).
 4. **Track 4 -- EMG-to-Pose** (cross-user and cross-stage): regress
    20 hand-joint angle trajectories from surface EMG. Headline metric:
-   **mean absolute angular error** in degrees (lower is better).
+   **mean absolute angular error** in radians (lower is better).
 
 All four tracks accept both task-specific models and foundation
 models.

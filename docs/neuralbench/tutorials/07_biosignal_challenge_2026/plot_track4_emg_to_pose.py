@@ -8,7 +8,7 @@ predefined test split measures generalisation across users, movement
 stages, and both together.
 
 - **Shift**: held-out users, stages, and user-stage combinations.
-- **Headline metric**: mean absolute angular error in degrees (lower
+- **Headline metric**: mean absolute angular error in radians (lower
   is better).
 - **Data**: ``emg2pose`` / NM000281 (193 participants, 25,253
   recordings, 370 hours, 29 movement stages, 2 kHz).
@@ -23,7 +23,8 @@ stages, and both together.
 #   with motion-capture hand pose).
 # - **Model**: ``VEMG2Pose``, the paper's regression baseline.
 # - **Target**: a dense 20-joint angle trajectory for each 5-s window.
-# - **Headline metric key**: ``test/mae`` (degrees).
+# - **Headline metric key**: ``test/mae`` (radians; x57.29578 for the
+#   paper's degrees).
 #
 # .. dropdown:: Show ``tasks/emg/pose/config.yaml``
 #
@@ -60,9 +61,10 @@ stages, and both together.
 #
 # The paper split comes from the BIDS ``scans.tsv``, falling back to the
 # upstream ``emg2pose_metadata.csv`` on releases whose ``scans.tsv`` omits it.
-# ``BAD_IK`` events exclude intervals without inverse-kinematics labels, and
-# padded recording tails are not segmented into training windows. Joint angles
-# are converted from radians to degrees before loss and metric computation.
+# ``BAD_IK`` events mark intervals without inverse-kinematics labels, and any
+# window overlapping one is dropped from every split; padded recording tails
+# are not segmented into training windows either. Joint angles stay in the
+# radians emg2pose trains on, so the loss and metrics are radians too.
 #
 # .. warning::
 #

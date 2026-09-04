@@ -56,8 +56,8 @@ data:
     notch_filter: null
     baseline: null
     scaler: null
-    # Joint labels are radians; report the paper's degree-based metrics.
-    scale_factor: 57.29577951308232
+    # Radians, as emg2pose trains and logs them; its Table 4 degrees are a
+    # reporting-time x57.29578. Scaling here would stall VEMG2Pose's output_scalar.
     clamp: null
     # Same cache as the neuro pass above: without it, ``=replace=`` drops the
     # default target infra and every job re-reads all 25232 recordings.
