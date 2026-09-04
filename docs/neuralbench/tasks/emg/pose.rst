@@ -5,7 +5,7 @@ Hand pose decoding
 | **Category**: motor / hand-pose decoding
 | **Dataset**: :py:class:`~neuralset.studies.Salter2024Emg2pose` (emg2pose)
 | **Objective**: :bdg-dark:`20-joint angle trajectory regression`
-| **Split**: The paper's ``train`` / ``val`` / ``test`` assignment
+| **Split**: The paper's assignment, testing on its held-out user+stage set
 
 .. image:: https://fb-ctrl-oss.s3.amazonaws.com/emg2pose/emg2pose_overview.png
    :alt: emg2pose overview: sEMG wristband recordings paired with motion-capture hand pose
@@ -57,6 +57,19 @@ Dataset Notes
   the session's BIDS ``scans.tsv``. NEMAR tags up to ``v1.0.3`` omit those two
   columns, so for those releases the labels are joined from the upstream
   ``emg2pose_metadata.csv`` on the ``scans.tsv`` ``source_file``.
+* **Test scenario**: the paper splits ``test`` into three disjoint sets scored
+  separately in its Table 4 -- held-out users, held-out stages, and both.  A
+  single pooled score matches none of them, so ``test`` here keeps only the
+  held-out user+stage set (456 recordings, 20 users, 7 h), which the paper calls
+  "of greatest value as the most encompassing real-world deployment setting" and
+  where ``vemg2pose`` regression scores 15.8 +- 1.4 degrees.  ``val`` keeps both
+  of its scenarios, matching the validation split emg2pose selects models on.
+  Note the paper averages within each user before reporting mean and standard
+  deviation across users, whereas ``test/mae`` pools frames.
+* **Rotation augmentation**: training rotates the band by -1, 0 or +1 electrode
+  (the paper's Appendix C.4), and never touches validation or test.  emg2pose
+  redraws the offset for every window; braindecode's ``BandRotation`` draws one
+  per batch, so a training step sees one rotation rather than 64.
 
 .. warning::
 

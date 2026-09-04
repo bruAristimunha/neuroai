@@ -17,6 +17,11 @@ data:
     drop_recordings_shorter_than_a_window:
       name: QueryEvents
       query: "duration >= 5.895"
+    # The paper scores its three test sets separately (Table 4), so a pooled
+    # ``test/mae`` matches none of them; ``val`` keeps both of its scenarios.
+    keep_held_out_user_stage_test:
+      name: QueryEvents
+      query: "split != 'test' or generalization == 'user_stage'"
     split:
       name: PredefinedSplit
       event_type: Emg
@@ -70,7 +75,8 @@ data:
       gpus_per_node: 1
       cpus_per_task: 10
       min_samples_per_job: 200
-  # 5-s trajectories, the paper's evaluation length.
+  # 5-s trajectories, the paper's evaluation length. Models with left context
+  # widen ``duration`` alone, so their scored 5-s tails still tile without gaps.
   trigger_event_type: Emg
   start: 0.0
   duration: 5.0
@@ -106,8 +112,8 @@ lightning_optimizer_config:
     name: Adam
     lr: 1.0e-3
   scheduler: null
-# emg2pose rotates the 16-electrode band by one position on every training
-# batch (config/transforms/rotation_augmentation.yaml), a single band here.
+# emg2pose's RotationAugmentation, over its single 16-electrode band. Upstream
+# redraws the offset per window; braindecode's BandRotation draws one per batch.
 augmentation:
   probability: 1.0
   num_bands: 1
