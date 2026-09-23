@@ -11,6 +11,7 @@ from pathlib import Path
 import mne
 import pandas as pd
 
+from neuralfetch import download
 from neuralset.events import study
 
 
@@ -60,7 +61,6 @@ class Xu2024Alljoined(study.Study):
     description: tp.ClassVar[str] = (
         "8 participants viewing static NSD images in 64-channel EEG at 512 Hz."
     )
-    requirements: tp.ClassVar[tuple[str, ...]] = ("nemar-py>=0.3.1",)
 
     _info: tp.ClassVar[study.StudyInfo] = study.StudyInfo(
         num_timelines=13,
@@ -72,15 +72,9 @@ class Xu2024Alljoined(study.Study):
     )
 
     def _download(self, overwrite: bool = False) -> None:
-        import nemar  # type: ignore[import-not-found]
-
-        nemar.download(
-            dataset="nm000133",
-            tag="v1.0.4",
-            target_dir=Path(self.path) / "download" / "nm000133",
-            scope=["raw", "stimuli"],
-            trust_existing=not overwrite,
-        )
+        download.Nemar(
+            study="nm000133", dset_dir=self.path, tag="v1.0.4", scope=["raw", "stimuli"]
+        ).download(overwrite=overwrite)
 
     @staticmethod
     def _get_fname(

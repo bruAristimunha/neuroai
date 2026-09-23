@@ -1430,6 +1430,34 @@ class Huggingface(BaseDownload):
         print("\nDownloaded Dataset")
 
 
+class Nemar(BaseDownload):
+    """Download a published NEMAR dataset version (``nm…``) into ``download/<study>/``.
+
+    ``tag`` pins the version (``None``: latest) and keys the success file, so a
+    bump downloads again; ``scope`` and ``include``/``exclude`` go to nemar-py.
+    """
+
+    requirements: tp.ClassVar[tuple[str, ...]] = ("nemar-py>=0.3.1",)
+    tag: str | None = None
+    scope: list[str] = ["raw"]
+
+    def get_success_file(self) -> Path:
+        return self._dl_dir / f"nemar_{self.study}_{self.tag}_success_download.txt"
+
+    def _download(self, overwrite: bool = False) -> None:
+        import nemar  # type: ignore[import-not-found]
+
+        nemar.download(
+            dataset=self.study,
+            tag=self.tag,
+            target_dir=self._dl_dir / self.study,
+            include=self.include or None,
+            exclude=self.exclude or None,
+            scope=self.scope,
+            trust_existing=not overwrite,  # overwrite re-hashes files on disk
+        )
+
+
 class Openneuro(BaseDownload):
     """Download datasets from OpenNeuro.
 
