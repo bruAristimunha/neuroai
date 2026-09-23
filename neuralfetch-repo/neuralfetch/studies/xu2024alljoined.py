@@ -4,12 +4,6 @@
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
 
-"""
-NOTE: The data is currently available as `.fif` files, however the GitHub documentation suggests
-there exists a BIDS version as well. If this becomes available, it might make sense to rewrite the
-implementation to use the BIDS version instead.
-"""
-
 import typing as tp
 from itertools import product
 from pathlib import Path
@@ -17,7 +11,6 @@ from pathlib import Path
 import mne
 import pandas as pd
 
-from neuralfetch import download
 from neuralset.events import study
 
 
@@ -36,8 +29,6 @@ class Xu2024Alljoined(study.Study):
         - Paradigm: passive viewing of NSD natural images
 
     Notes:
-        - Data available as ``.fif`` files; a BIDS version may exist.
-        - Requires NSD stimuli from Allen2022Massive for image filepaths.
         - Known broken/missing files: subj02 ses2, subj03 ses1, subj07 ses2, subj08 ses2.
     """
 
@@ -69,23 +60,26 @@ class Xu2024Alljoined(study.Study):
     description: tp.ClassVar[str] = (
         "8 participants viewing static NSD images in 64-channel EEG at 512 Hz."
     )
-    requirements: tp.ClassVar[tuple[str, ...]] = (
-        "h5py",
-        "tables",
-    )
+    requirements: tp.ClassVar[tuple[str, ...]] = ("nemar-py>=0.3.1",)
 
     _info: tp.ClassVar[study.StudyInfo] = study.StudyInfo(
-        num_timelines=12,
+        num_timelines=13,
         num_subjects=8,
-        num_events_in_query=3836,
+        num_events_in_query=3840,
         event_types_in_query={"Eeg", "Image"},
         data_shape=(64, 1778688),
         frequency=512.0,
     )
 
     def _download(self, overwrite: bool = False) -> None:
-        download.Osf(study="kqgs8", dset_dir=self.path, folder="xu2024").download(
-            overwrite=overwrite
+        import nemar  # type: ignore[import-not-found]
+
+        nemar.download(
+            dataset="nm000133",
+            tag="v1.0.3",
+            target_dir=Path(self.path) / "download" / "nm000133",
+            scope=["raw", "stimuli"],
+            trust_existing=not overwrite,
         )
 
     @staticmethod
@@ -93,15 +87,12 @@ class Xu2024Alljoined(study.Study):
         path: str | Path,
         subject: str,
         session: int,
-        kind: tp.Literal["raw", "epochs", "h5"] = "raw",
+        kind: tp.Literal["raw", "events"] = "raw",
     ):
-        if kind == "raw":
-            folder, suffix = "raw", "_eeg.fif"
-        elif kind == "epochs":
-            folder, suffix = "raw", "_epo.fif"
-        elif kind == "h5":
-            folder, suffix = "05_125", ".h5"
-        return Path(path) / folder / f"subj{int(subject):02}_session{session}{suffix}"
+        sub, ses = f"sub-{int(subject):02}", f"ses-{session:02}"
+        suffix = "eeg.bdf" if kind == "raw" else "events.tsv"
+        folder = Path(path) / "download" / "nm000133" / sub / ses / "eeg"
+        return folder / f"{sub}_{ses}_task-images_{suffix}"
 
     def iter_timelines(self) -> tp.Iterator[dict[str, tp.Any]]:
         """Returns a generator of all recordings.
@@ -113,16 +104,9 @@ class Xu2024Alljoined(study.Study):
         """
         for subject, session in product(range(1, 9), range(1, 3)):
             raw_fname = self._get_fname(self.path, str(subject), session, kind="raw")
-            h5_fname = self._get_fname(self.path, str(subject), session, kind="h5")
+            h5_fname = self._get_fname(self.path, str(subject), session, "events")
             if raw_fname.exists() and h5_fname.exists():
                 yield dict(subject=str(subject), session=session)
-
-    def _get_nsd_stimuli_path(self) -> Path:
-        from neuralfetch.studies.allen2022massive import (
-            get_allen2022massive_common_path,
-        )
-
-        return get_allen2022massive_common_path(self.path) / "nsd_stimuli"
 
     def _load_raw(self, timeline: dict[str, tp.Any]) -> mne.io.RawArray:
         tl = timeline
@@ -138,22 +122,20 @@ class Xu2024Alljoined(study.Study):
         """
         Broken/missing files:
         - subj02, session 2
-        - subj03, session 1
         - subj07, session 2
         - subj08, session 2
         """
         tl = timeline
         # Load image event information
-        h5_fname = self._get_fname(self.path, tl["subject"], tl["session"], kind="h5")
-        events = pd.read_hdf(h5_fname).drop("eeg", axis=1)
-        events["filepath"] = events["73k_id"].apply(
-            lambda x: str(self._get_nsd_stimuli_path() / f"{x}.png")
-        )
-        events["start"] = events.curr_time
+        h5_fname = self._get_fname(self.path, tl["subject"], tl["session"], "events")
+        events = pd.read_csv(h5_fname, sep="\t")
+        stimuli = Path(self.path).resolve() / "download" / "nm000133" / "stimuli"
+        events["filepath"] = events["stim_file"].apply(lambda x: str(stimuli / x))
+        events["start"] = events.onset
         events["duration"] = 0.3
         events["type"] = "Image"
 
-        events = events.drop(columns=["subject_id", "session", "curr_time"])
+        events = events.drop(columns=["onset"])
 
         info = study.SpecialLoader(method=self._load_raw, timeline=timeline).to_json()
         eeg = {
