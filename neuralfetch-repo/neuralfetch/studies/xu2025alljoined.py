@@ -17,9 +17,7 @@ from neuralset.events import study
 
 
 class Xu2025Alljoined(study.Study):
-    url: tp.ClassVar[str] = (
-        "https://huggingface.co/datasets/Alljoined/Alljoined-1.6M/tree/main/raw_eeg"
-    )
+    url: tp.ClassVar[str] = "https://doi.org/10.82901/nemar.nm000134"
     """Alljoined-1.6M: large-scale EEG responses to static images.
 
     A million-trial EEG dataset from 20 participants viewing static images,
@@ -57,10 +55,13 @@ class Xu2025Alljoined(study.Study):
     }
 
     @misc{xu2025_data,
-        url={https://huggingface.co/datasets/Alljoined/Alljoined-1.6M/tree/main/raw_eeg}
+        title={Alljoined-1.6M},
+        publisher={NEMAR},
+        doi={10.82901/nemar.nm000134},
+        url={https://doi.org/10.82901/nemar.nm000134}
     }
     """
-    licence: tp.ClassVar[str] = "CC-BY-NC-SA-4.0"
+    licence: tp.ClassVar[str] = "CC-BY-NC-ND-4.0"
     description: tp.ClassVar[str] = "20 participants watching static images in EEG."
 
     _info: tp.ClassVar[study.StudyInfo] = study.StudyInfo(
@@ -80,7 +81,7 @@ class Xu2025Alljoined(study.Study):
         )
         if not accept:
             raise RuntimeError(
-                "Alljoined-1.6M is released under CC-BY-NC-SA-4.0 (non-commercial use). "
+                f"Alljoined-1.6M is released under {self.licence} (non-commercial use). "
                 "Set ALLJOINED_ACCEPT_LICENCE=1 to accept the licence before downloading."
             )
         download.Nemar(

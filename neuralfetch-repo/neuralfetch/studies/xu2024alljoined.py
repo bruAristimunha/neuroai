@@ -16,7 +16,7 @@ from neuralset.events import study
 
 
 class Xu2024Alljoined(study.Study):
-    url: tp.ClassVar[str] = "https://osf.io/kqgs8"
+    url: tp.ClassVar[str] = "https://doi.org/10.82901/nemar.nm000133"
     """Alljoined: EEG responses to static images for EEG-to-Image decoding.
 
     8 participants viewing static images from the NSD stimulus set, recorded
@@ -25,12 +25,12 @@ class Xu2024Alljoined(study.Study):
 
     Experimental Design:
         - EEG recordings (64-channel, standard 1020 montage, BDF format)
-        - 8 participants, 2 sessions each
+        - 8 participants, up to 2 sessions each
         - Image presentation duration: 300 ms
         - Paradigm: passive viewing of NSD natural images
 
     Notes:
-        - Known broken/missing files: subj02 ses2, subj07 ses2, subj08 ses2.
+        - sub-02, sub-07 and sub-08 have a single session.
     """
 
     aliases: tp.ClassVar[tuple[str, ...]] = ("Alljoined1",)
@@ -50,14 +50,13 @@ class Xu2024Alljoined(study.Study):
 
     @misc{xu2025alljoined1,
         title={Alljoined1},
-        url={osf.io/kqgs8},
-        publisher={OSF},
         author={Xu, Jonathan},
-        year={2025},
-        month={Sep}
+        publisher={NEMAR},
+        doi={10.82901/nemar.nm000133},
+        url={https://doi.org/10.82901/nemar.nm000133}
     }
     """
-    licence: tp.ClassVar[str] = "UNKNOWN"
+    licence: tp.ClassVar[str] = "CC-BY-NC-ND-4.0"
     description: tp.ClassVar[str] = (
         "8 participants viewing static NSD images in 64-channel EEG at 512 Hz."
     )
@@ -93,17 +92,11 @@ class Xu2024Alljoined(study.Study):
         return folder / f"{sub}_{ses}_task-images_{suffix}"
 
     def iter_timelines(self) -> tp.Iterator[dict[str, tp.Any]]:
-        """Returns a generator of all recordings.
-
-        A timeline is only yielded when both the raw EEG (``.fif``) and the
-        image-event (``.h5``) files exist. Some recordings ship the raw EEG
-        without the accompanying event file (e.g. subj03 session1), and those
-        would otherwise yield empty event frames downstream.
-        """
+        """Yield the recordings whose raw EEG and ``events.tsv`` both exist."""
         for subject, session in product(range(1, 9), range(1, 3)):
             raw_fname = self._get_fname(self.path, str(subject), session, kind="raw")
-            h5_fname = self._get_fname(self.path, str(subject), session, "events")
-            if raw_fname.exists() and h5_fname.exists():
+            events_fname = self._get_fname(self.path, str(subject), session, "events")
+            if raw_fname.exists() and events_fname.exists():
                 yield dict(subject=str(subject), session=session)
 
     def _load_raw(self, timeline: dict[str, tp.Any]) -> mne.io.RawArray:
@@ -117,16 +110,10 @@ class Xu2024Alljoined(study.Study):
         return raw
 
     def _load_timeline_events(self, timeline: dict[str, tp.Any]) -> pd.DataFrame:
-        """
-        Broken/missing files:
-        - subj02, session 2
-        - subj07, session 2
-        - subj08, session 2
-        """
         tl = timeline
         # Load image event information
-        h5_fname = self._get_fname(self.path, tl["subject"], tl["session"], "events")
-        events = pd.read_csv(h5_fname, sep="\t")
+        events_fname = self._get_fname(self.path, tl["subject"], tl["session"], "events")
+        events = pd.read_csv(events_fname, sep="\t")
         stimuli = Path(self.path).resolve() / "download" / "nm000133" / "stimuli"
         events["filepath"] = events["stim_file"].apply(lambda x: str(stimuli / x))
         events["start"] = events.onset
