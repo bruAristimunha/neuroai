@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-- `neuralfetch`: new `Nemar` download backend (nemar-py; `version=` pins the release, `include`/`exclude` select files); `Xu2024Alljoined` and `Xu2025Alljoined` use it for the NEMAR BIDS releases nm000133 v1.0.4 and nm000134 v1.0.3 (~5 and ~8.5 GB), with images from each event's `stim_file`; both need `ALLJOINED_ACCEPT_LICENCE=1` to accept the licence (#279).
+- `neuralfetch`: new `Nemar` download backend (nemar-py; `version=` pins the release, `include`/`exclude` select files); `Xu2024Alljoined` and `Xu2025Alljoined` use it for the NEMAR BIDS releases nm000133 v1.0.4 and nm000134 v1.0.3 (~5 and ~8.5 GB), with images from each event's `stim_file` (#279).
 - `neuralfetch`: `Kemp2000Analysis` downloads Sleep-EDF from PhysioNet's `physionet-open` S3 mirror, as the other PhysioNet studies already do, instead of the `physionet.org` web host, which served it at 51 KB/s against the mirror's 31 MB/s on the host we measured — minutes for the ~7 GB corpus rather than tens of hours. Recordings now live under `download/sleep-edfx/1.0.0/sleep-cassette/`, and the `physionet-sleep-data/` folder the previous `mne` fetch wrote is still read where it lies, so a copy fetched before the switch is neither re-downloaded nor silently invisible.
 - docs: REVE's `brain-bzh` checkpoints are public, so the starter kit, `install.md` and the model page no longer ask for a HuggingFace account, an accepted licence or a token.
 - docs: each EEG/EMG Foundation Challenge 2026 track page opens with a cheaper way in than its default corpus — `xu2024alljoined` for Track 1, `tangermann2012` for Track 2, and `--download --debug` for Track 4.

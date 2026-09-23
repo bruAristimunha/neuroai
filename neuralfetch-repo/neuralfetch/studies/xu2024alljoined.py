@@ -4,7 +4,6 @@
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
 
-import os
 import typing as tp
 from itertools import product
 from pathlib import Path
@@ -73,16 +72,6 @@ class Xu2024Alljoined(study.Study):
     )
 
     def _download(self, overwrite: bool = False) -> None:
-        accept = os.environ.get("ALLJOINED_ACCEPT_LICENCE", "").lower() in (
-            "1",
-            "true",
-            "yes",
-        )
-        if not accept:
-            raise RuntimeError(
-                "Alljoined-1 is released for non-commercial use. "
-                "Set ALLJOINED_ACCEPT_LICENCE=1 to accept the licence before downloading."
-            )
         download.Nemar(
             study="nm000133",
             dset_dir=self.path,
