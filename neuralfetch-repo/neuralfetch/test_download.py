@@ -344,18 +344,18 @@ def test_physionet_preserves_study_version_structure(tmp_path: Path) -> None:
         assert (out_root / name).read_text("utf8") == expected
 
 
-@pytest.mark.parametrize("tag,overwrite", [(None, False), ("v1.0.4", True)])
-def test_nemar(tmp_path: Path, tag: str | None, overwrite: bool) -> None:
-    obj = download.Nemar(study="nm000133", dset_dir=tmp_path / "study", tag=tag)
+@pytest.mark.parametrize("version,overwrite", [(None, False), ("1.0.4", True)])
+def test_nemar(tmp_path: Path, version: str | None, overwrite: bool) -> None:
+    obj = download.Nemar(study="nm000133", dset_dir=tmp_path / "study", version=version)
     with patch.dict(sys.modules, {"nemar": (nemar := MagicMock())}):
         obj._download(overwrite=overwrite)
     kw = nemar.download.call_args.kwargs
     assert (kw["target_dir"], kw["tag"], kw["trust_existing"]) == (
         obj._dl_dir / "nm000133",
-        tag,
+        version,
         not overwrite,
     )
-    assert f"_{tag}_" in obj.get_success_file().name
+    assert f"_{version}_" in obj.get_success_file().name
 
 
 @pytest.mark.parametrize("study_name", ["Allen2022Massive", "Allen2022MassiveRaw"])

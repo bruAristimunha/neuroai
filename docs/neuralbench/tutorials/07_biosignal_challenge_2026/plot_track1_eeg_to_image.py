@@ -119,7 +119,7 @@ concepts.
 #
 # .. tip::
 #    The default corpus is a ~220 GB download. ``--dataset xu2024alljoined``
-#    (Alljoined-1, ~25 GB) runs the same pipeline end to end on a fraction of
+#    (Alljoined-1, ~5 GB) runs the same pipeline end to end on a fraction of
 #    that, which is the cheaper way to find out whether your setup works
 #    before committing to the default.
 #
