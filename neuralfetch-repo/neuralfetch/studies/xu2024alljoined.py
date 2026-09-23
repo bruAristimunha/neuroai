@@ -76,7 +76,7 @@ class Xu2024Alljoined(study.Study):
 
         nemar.download(
             dataset="nm000133",
-            tag="v1.0.3",
+            tag="v1.0.4",
             target_dir=Path(self.path) / "download" / "nm000133",
             scope=["raw", "stimuli"],
             trust_existing=not overwrite,
