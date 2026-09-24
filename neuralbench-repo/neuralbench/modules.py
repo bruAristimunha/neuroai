@@ -679,10 +679,8 @@ class DownstreamWrapperModel(nn.Module):
     """
 
     def reset_state(self) -> None:
-        """Forward recording boundaries to a stateful backbone, when present."""
-        reset = getattr(self.wrapped_model, "reset_state", None)
-        if reset is not None:
-            reset()
+        """Forward the required reset hook to the backbone for sequential evaluation."""
+        self.wrapped_model.reset_state()
 
     def __init__(
         self,

@@ -103,6 +103,18 @@ def test_wrapped_callback_in_lightning(shape, targets, loss, expected_loss, devi
     assert observed == [1.0, 3.0, 4.0] * 3
 
 
+@pytest.mark.parametrize("wrapped", [False, True])
+def test_sequential_evaluation_requires_reset_state(wrapped):
+    model = nn.Identity()
+    if wrapped:
+        model = DownstreamWrapperModel(model, torch.Size([1]), None, 1, aggregation=None)
+    batch = SimpleNamespace(segments=[SimpleNamespace(timeline="recording")])
+    with pytest.raises(AttributeError, match="reset_state"):
+        ResetAtBoundary().on_test_batch_start(
+            SimpleNamespace(world_size=1), SimpleNamespace(model=model), batch, 0
+        )
+
+
 class _DummyLoss:
     def build(self, **kwargs) -> nn.Module:
         return nn.MSELoss()
