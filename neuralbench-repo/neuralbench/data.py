@@ -159,6 +159,7 @@ class Data(ns.BaseModel):
     # Dataloaders
     sampler: BaseSampler | None = None
     batch_size: int = 64
+    sequential_eval: bool = False  # Ordered single-window validation and testing.
     num_workers: int = 0
     drop_last: bool = False
     pin_memory: bool = True
@@ -285,6 +286,17 @@ class Data(ns.BaseModel):
         loaders = {}
         for split in tqdm(["train", "val", "test"], desc="Preparing segments"):
             split_dataset = dataset.select(dataset.triggers.split == split)
+            sequential = self.sequential_eval and split != "train"
+            if sequential:
+                split_dataset = split_dataset.select(
+                    sorted(
+                        range(len(split_dataset)),
+                        key=lambda i: (
+                            split_dataset.segments[i].timeline,
+                            split_dataset.segments[i].start,
+                        ),
+                    )
+                )
             LOGGER.info(f"# {split} segments: {len(split_dataset)} \n")
 
             sampler = None
@@ -295,7 +307,7 @@ class Data(ns.BaseModel):
             loaders[split] = DataLoader(
                 split_dataset,
                 collate_fn=split_dataset.collate_fn,
-                batch_size=self.batch_size,
+                batch_size=1 if sequential else self.batch_size,
                 shuffle=split == "train" and sampler is None,
                 sampler=sampler,
                 num_workers=self.num_workers,

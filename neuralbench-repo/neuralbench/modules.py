@@ -678,6 +678,12 @@ class DownstreamWrapperModel(nn.Module):
     model -> output key selection -> aggregation -> probe.
     """
 
+    def reset_state(self) -> None:
+        """Forward recording boundaries to a stateful backbone, when present."""
+        reset = getattr(self.wrapped_model, "reset_state", None)
+        if reset is not None:
+            reset()
+
     def __init__(
         self,
         model: nn.Module,
