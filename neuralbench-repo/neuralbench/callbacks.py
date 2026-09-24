@@ -35,17 +35,17 @@ LOGGER = logging.getLogger(__name__)
 
 
 class ResetAtBoundary(Callback):
-    """Call model.reset_state() between recordings; stateless models need a no-op."""
+    """Reset optional model state between recordings; leave targets and metrics alone."""
 
     def on_test_batch_start(
         self, trainer, pl_module, batch, batch_idx, dataloader_idx=0
     ):
-        # ponytail: single-device streams; shard whole recordings before adding DDP.
         if len(batch.segments) != 1 or trainer.world_size != 1:
             raise ValueError("Sequential evaluation requires one window and one device")
         key = (dataloader_idx, batch.segments[0].timeline)
         if batch_idx == 0 or key != self.previous:
-            pl_module.model.reset_state()
+            if hasattr(pl_module.model, "reset_state"):
+                pl_module.model.reset_state()
         self.previous = key
 
     on_validation_batch_start = on_test_batch_start
