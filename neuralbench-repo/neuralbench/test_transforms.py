@@ -5,7 +5,6 @@
 # LICENSE file in the root directory of this source tree.
 
 import typing as tp
-from math import nan
 from pathlib import Path
 
 import pandas as pd
@@ -14,7 +13,6 @@ import pytest
 import neuralset as ns
 from neuralset.events import standardize_events
 
-from .extractors import SleepOnsetTargetExtractor
 from .main import Data
 from .transforms import (
     AddDefaultEvents,
@@ -27,18 +25,6 @@ from .transforms import (
     SimilaritySplit,
     TextPreprocessor,
 )
-
-
-@pytest.mark.parametrize("start,expected", [(50, nan), (55, 600), (1245, 2), (1250, nan)])
-def test_causal_target_masks_whole_windows(start, expected):
-    event = ns.events.Event(
-        timeline="a",
-        start=0.0,
-        duration=1300.0,
-        extra={"n2_onset": 1252.0, "score_start": 52.0},
-    )
-    arrays = SleepOnsetTargetExtractor()._get_timed_arrays([event], start, 5.0)
-    assert next(iter(arrays)).data.item() == pytest.approx(expected, nan_ok=True)
 
 
 @pytest.fixture

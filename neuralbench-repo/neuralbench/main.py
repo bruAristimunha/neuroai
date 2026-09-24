@@ -364,10 +364,8 @@ class Experiment(BaseExperiment):
         return self.trainer_config.build(
             logger=loggers,
             callbacks=callbacks,
-            accelerator=(self.trainer_config.accelerator
-                         if self.trainer_config.accelerator != "auto"
-                         else "cpu" if self.infra.gpus_per_node == 0 else "auto"),
-            devices=1 if is_test else max(1, self.infra.gpus_per_node),
+            accelerator="cpu" if self.infra.gpus_per_node == 0 else "auto",
+            devices=1 if is_test else self.infra.gpus_per_node,
             num_nodes=1,
         )
 

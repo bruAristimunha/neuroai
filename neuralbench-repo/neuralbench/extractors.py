@@ -52,10 +52,6 @@ class SleepOnsetTargetExtractor(ns.extractors.BaseStatic):
         for event in events:
             n2_onset = float(event._get_field_or_extra("n2_onset"))
             time_to_onset = np.clip(n2_onset - stop, 0.0, self.cap_s)
-            if "score_start" in event.extra and (
-                start < event.extra["score_start"] or stop > n2_onset
-            ):
-                time_to_onset = np.nan  # Context reaches the model, not the metric.
             embedding = torch.tensor([time_to_onset], dtype=torch.float32)
             yield ns.base.TimedArray(
                 frequency=0,

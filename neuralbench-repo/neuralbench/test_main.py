@@ -5,7 +5,7 @@
 # LICENSE file in the root directory of this source tree.
 
 import typing as tp
-from math import log, nan
+from math import log
 from types import SimpleNamespace
 
 import lightning.pytorch as pl
@@ -38,11 +38,11 @@ from .utils import TrainerConfig
 @pytest.mark.parametrize(
     "shape,targets,loss,expected_loss",
     [
-        ((1, 1), torch.tensor([[nan], [2.0], [3.0]]), nn.L1Loss(), 1.0),
+        ((1, 1), torch.tensor([[0.0], [2.0], [3.0]]), nn.L1Loss(), 1.0),
         ((1, 2), torch.tensor([[0.0, 1.0]] * 3), nn.CrossEntropyLoss(), log(2)),
         ((1, 4, 20), torch.zeros(3, 20, 4), nn.L1Loss(), 8 / 3),
     ],
-    ids=["scalar-unscored-context", "classification", "dense"],
+    ids=["scalar", "classification", "dense"],
 )
 @pytest.mark.parametrize("device", ["cpu", "mps"])
 def test_wrapped_callback_in_lightning(shape, targets, loss, expected_loss, device):
