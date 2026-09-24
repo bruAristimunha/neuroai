@@ -86,9 +86,20 @@ class BinnedMAE(torchmetrics.Metric):
             dist_reduce_fx="sum",
         )
 
+    def _apply(self, fn, exclude_state=()):
+        # MPS has no float64 support. Keep exact accumulators on CPU while
+        # returning float32 scores on the model device for Lightning logging.
+        if fn(torch.zeros(0, device=self.device)).device.type == "mps":
+            states = ("sum_abs_err", "count")
+            for name in states:
+                self._defaults[name] = self._defaults[name].cpu()
+                setattr(self, name, getattr(self, name).cpu())
+            exclude_state = tuple(exclude_state) + states
+        return super()._apply(fn, exclude_state=exclude_state)
+
     def update(self, preds: torch.Tensor, target: torch.Tensor) -> None:
-        t = target.flatten().to(self.sum_abs_err.dtype)
-        e = (preds.flatten().to(self.sum_abs_err.dtype) - t).abs()
+        t = target.flatten().to(self.sum_abs_err.device).to(self.sum_abs_err.dtype)
+        e = (preds.flatten().to(self.sum_abs_err.device).to(self.sum_abs_err.dtype) - t).abs()
         bin_idx = _assign_bins(t, self.bin_boundaries)
         in_range = (t >= self.bin_boundaries[0]) & (t <= self.bin_boundaries[-1])
 
@@ -99,9 +110,9 @@ class BinnedMAE(torchmetrics.Metric):
     def compute(self) -> torch.Tensor:
         nonempty = self.count > 0
         if not bool(nonempty.any()):
-            return torch.tensor(float("nan"), device=self.sum_abs_err.device)
+            return torch.tensor(float("nan"), device=self.device)
         per_bin = self.sum_abs_err / self.count.clamp(min=1)
-        return per_bin[nonempty].mean().to(torch.float32)
+        return per_bin[nonempty].mean().to(dtype=torch.float32, device=self.device)
 
 
 _BinnedMAEConfig = convert_to_pydantic(

@@ -402,6 +402,19 @@ class AddSleepOnsetTargets(_transf.EventsTransform):
         return pd.concat([events, new_rows], ignore_index=True, axis=0)
 
 
+class ExpandSleepOnsetTestContext(_transf.EventsTransform):
+    """After splitting, expose full test recordings but retain private scoring bounds."""
+
+    def _run(self, events: pd.DataFrame) -> pd.DataFrame:
+        events = events.copy()
+        markers = (events.type == "SleepOnsetMarker") & (events.split == "test")
+        eeg = events.loc[events.type == "Eeg"].set_index("timeline", verify_integrity=True)
+        events.loc[markers, "score_start"] = events.loc[markers, "start"]
+        for field in ("start", "duration", "stop"):
+            events.loc[markers, field] = events.loc[markers, "timeline"].map(eeg[field])
+        return events
+
+
 class CropTimelines(_transf.EventsTransform):
     """Crop neuro timelines.
 

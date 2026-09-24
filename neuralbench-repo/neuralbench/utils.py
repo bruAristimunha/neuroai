@@ -531,6 +531,7 @@ class TrainerConfig(ns.BaseModel):
     limit_train_batches: int | None = None
     limit_val_batches: int | None = None
     num_sanity_val_steps: int = 2
+    inference_mode: bool = True
     accumulate_grad_batches: int = 1
 
     # Hardware
@@ -566,6 +567,7 @@ class TrainerConfig(ns.BaseModel):
             enable_progress_bar=self.enable_progress_bar,
             log_every_n_steps=self.log_every_n_steps,
             num_sanity_val_steps=self.num_sanity_val_steps,
+            inference_mode=self.inference_mode,
             fast_dev_run=self.fast_dev_run,
             accumulate_grad_batches=self.accumulate_grad_batches,
             logger=logger,

@@ -177,6 +177,13 @@ class BrainModule(pl.LightningModule):
         metric_pred, metric_true = y_pred, y_true
         loss_pred, loss_true = y_pred, y_true
         metric_subjects = batch.data["subject_id"]
+        if y_pred.ndim == 2 and y_true.ndim == 2:
+            valid = torch.isfinite(y_true).all(dim=-1)
+            if not valid.any():
+                return y_pred.sum() * 0, y_pred, y_true
+            metric_pred = loss_pred = y_pred[valid]
+            metric_true = loss_true = y_true[valid]
+            metric_subjects = metric_subjects[valid]
         if y_pred.ndim == 3 and y_true.ndim == 3:
             # A dense prediction is time-major (B, T, C) -- braindecode's
             # convention -- while an extracted target is channel-major (B, C, T).
@@ -268,7 +275,7 @@ class BrainModule(pl.LightningModule):
 
     def test_step(self, batch, batch_idx: int):
         _, y_pred, y_true = self._run_step(batch, step_name="test", batch_idx=batch_idx)
-        return y_pred, y_true
+        return y_pred.clone(), y_true
 
     # Schedulers that need the total training step count at build time.
     _SCHEDULER_STEP_KWARG: tp.ClassVar[dict[type, str]] = {}

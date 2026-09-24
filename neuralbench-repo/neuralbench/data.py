@@ -24,6 +24,7 @@ from .transforms import (  # noqa: F401
     AddSleepOnsetTargets,
     CropSleepRecordings,
     CropTimelines,
+    ExpandSleepOnsetTestContext,
     OffsetEvents,
     PredefinedSplit,
     ShuffleTrainingLabels,
