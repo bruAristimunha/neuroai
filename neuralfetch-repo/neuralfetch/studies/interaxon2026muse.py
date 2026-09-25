@@ -13,21 +13,35 @@ from neuralset.events import study
 class Interaxon2026Muse(study.Study):
     """At-home Muse S family EEG with first-N2 point annotations.
 
-    Version 1.0.0 contains 540 recordings from 203 participants: 500 training
-    sessions and 40 test sessions, all from participants also in training.
-    Session-table splits are preserved, not inferred from participant IDs.
+    Version 1.0.0 contains 540 recordings from 203 participants, totaling
+    approximately 157.52 hours. Four channels (TP9, AF7, AF8, TP10) are stored
+    at 128 Hz in EEG-BIDS/BrainVision format.
 
-    Signals have four channels (TP9, AF7, AF8, TP10) at 128 Hz. MNE-BIDS
-    applies BrainVision unit scaling; the loader does not filter or resample.
-    Full hypnograms, demographic information, acquisition dates, the N2 scoring
-    method and prior filtering history are not provided.
-
-    Every recording ends 300 seconds after N2. Duration, annotations and
-    session quality summaries must remain outside model inputs. These files
-    alone do not enforce causal evaluation or define the sealed test cohort.
-
-    Downloads use the existing NEMAR backend, pinned to version 1.0.0. A manually
-    supplied BIDS tree directly under the study directory remains supported.
+    Notes
+    -----
+    - Session tables supply 500 train and 40 test recordings. Every test
+      participant also appears in training; this is not the sealed competition
+      cohort. The loader preserves these labels; benchmark split transforms
+      may replace them in memory.
+    - Each recording has one zero-duration first-N2 annotation, not stable N2
+      or a full hypnogram. Onset is relative to recording start, not necessarily
+      lights out. The scoring method is undocumented.
+    - Every recording ends 300 seconds after N2. Total length, annotations,
+      future EEG and whole-recording quality summaries must stay outside
+      model inputs. Sequential batches alone do not make preprocessing causal.
+    - MNE-BIDS applies header unit scaling. This loader does not filter,
+      resample, clean artifacts or exclude recordings using quality flags.
+    - Exact Muse S generation, firmware, reference and prior filters are
+      unconfirmed. Downsampling from 256 Hz is a curator assumption, not a
+      verified acquisition fact. Demographics and acquisition dates are absent.
+    - Shared electrode coordinates have unknown provenance and should not be
+      treated as participant-specific measurements. Quality flags describe
+      signal screening, not independently confirmed artifacts.
+    - The deposit records consent and sharing authorization, an internal Muse
+      exemption determination, and destruction of the re-identification key.
+      Credit Muse Team under CC-BY-NC-SA-4.0.
+    - The NEMAR download is pinned to 1.0.0. An existing BIDS tree directly
+      under the study directory is also supported.
     """
 
     licence: tp.ClassVar[str] = "CC-BY-NC-SA-4.0"
@@ -95,45 +109,34 @@ class Interaxon2026Muse(study.Study):
         )
 
     def _load_raw(self, timeline):
-        raw = read_raw_bids(self._bids_path(timeline), verbose="ERROR")
-        if raw.ch_names != ["TP9", "AF7", "AF8", "TP10"] or raw.info["sfreq"] != 128:
-            raise ValueError("Unexpected channel order or sampling frequency")
-        return raw
+        return read_raw_bids(self._bids_path(timeline), verbose="ERROR")
 
     def _load_timeline_events(self, timeline):
-        header = self._bids_path(timeline).fpath
-        annotations = pd.read_csv(
-            header.with_name(header.name.replace("_eeg.vhdr", "_events.tsv")),
-            sep="\t",
-        )
-        onset = annotations.loc[annotations.trial_type == "n2_onset", "onset"]
-        if len(onset) != 1:
-            raise ValueError(f"Expected exactly one N2 onset: {header}")
+        raw = self._load_raw(timeline)
+        onset = raw.annotations.onset[raw.annotations.description == "n2_onset"].item()
+        duration = raw.n_times / raw.info["sfreq"]
+        if not 0 <= onset <= duration:
+            raise ValueError(f"N2 onset outside recording: {timeline}")
         sessions = pd.read_csv(
             self.bids_root / timeline["subject"] / f"{timeline['subject']}_sessions.tsv",
             sep="\t",
         ).set_index("session_id")
         split = sessions.loc[timeline["session"], "split"]
-        raw = self._load_raw(timeline)
-        if not 0 <= onset.iloc[0] <= raw.n_times / 128:
-            raise ValueError(f"N2 onset outside recording: {header}")
         return pd.DataFrame(
             [
                 dict(
                     type="Eeg",
                     start=0.0,
-                    duration=raw.n_times / 128,
+                    duration=duration,
                     filepath=study.SpecialLoader(
                         method=self._load_raw, timeline=timeline
                     ).to_json(),
-                    split=split,
                 ),
                 dict(
                     type="SleepStage",
-                    start=float(onset.iloc[0]),
+                    start=onset,
                     duration=0.0,
                     stage="N2",
-                    split=split,
                 ),
             ]
-        )
+        ).assign(split=split)

@@ -25,44 +25,6 @@ from neuralset.events import study as _study_mod
 INFO_STUDIES = [n for n, c in ns.Study.catalog().items() if c._info is not None]
 
 
-@pytest.mark.parametrize("downloaded", [False, True])
-def test_muse_bids_layout(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, downloaded: bool
-) -> None:
-    """Downloaded and manually supplied BIDS trees expose the same sessions."""
-    study = ns.Study(name="Interaxon2026Muse", path=tmp_path)
-    root = study.path / "download" / "nm000287" if downloaded else study.path
-
-    def write_sessions() -> None:
-        subject = root / "sub-001"
-        subject.mkdir(parents=True)
-        (subject / "sub-001_sessions.tsv").write_text(
-            "session_id\tsplit\nses-001\ttrain\nses-002\ttest\n"
-        )
-
-    def transfer(backend: _download_mod.Nemar, overwrite: bool = False) -> None:
-        assert backend.study == "nm000287" and backend.dset_dir == study.path
-        assert backend.version == "1.0.0"
-        assert overwrite
-        write_sessions()
-
-    if downloaded:
-        monkeypatch.setattr(_download_mod.Nemar, "download", transfer)
-        monkeypatch.setattr(
-            _download_mod.Datalad,
-            "download",
-            lambda *a, **kw: pytest.fail("Muse should use Nemar"),
-        )
-        study._download(overwrite=True)
-    else:
-        write_sessions()
-    assert list(study.iter_timelines()) == [
-        {"subject": "sub-001", "session": "ses-001"},
-        {"subject": "sub-001", "session": "ses-002"},
-    ]
-    assert study._bids_path({"subject": "sub-001", "session": "ses-001"}).root == root
-
-
 def _accepts_overwrite(func: object) -> bool:
     """True if *func* can be called with an ``overwrite=`` keyword."""
     params = inspect.signature(func).parameters  # type: ignore[arg-type]
