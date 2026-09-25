@@ -26,7 +26,7 @@ class Interaxon2026Muse(study.Study):
     session quality summaries must remain outside model inputs. These files
     alone do not enforce causal evaluation or define the sealed test cohort.
 
-    Downloads use the existing DataLad backend and require git-annex. A manually
+    Downloads use the existing NEMAR backend, pinned to version 1.0.0. A manually
     supplied BIDS tree directly under the study directory remains supported.
     """
 
@@ -59,10 +59,10 @@ class Interaxon2026Muse(study.Study):
     )
 
     def _download(self, overwrite: bool = False) -> None:
-        download.Datalad(
+        download.Nemar(
             study="nm000287",
             dset_dir=self.path,
-            repo_url="https://github.com/nemarDatasets/nm000287.git",
+            version="1.0.0",
         ).download(overwrite=overwrite)
 
     @property

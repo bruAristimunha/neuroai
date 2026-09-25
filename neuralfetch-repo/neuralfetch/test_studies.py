@@ -40,14 +40,19 @@ def test_muse_bids_layout(
             "session_id\tsplit\nses-001\ttrain\nses-002\ttest\n"
         )
 
-    def transfer(backend: _download_mod.Datalad, overwrite: bool = False) -> None:
+    def transfer(backend: _download_mod.Nemar, overwrite: bool = False) -> None:
         assert backend.study == "nm000287" and backend.dset_dir == study.path
-        assert backend.repo_url == "https://github.com/nemarDatasets/nm000287.git"
+        assert backend.version == "1.0.0"
         assert overwrite
         write_sessions()
 
     if downloaded:
-        monkeypatch.setattr(_download_mod.Datalad, "download", transfer)
+        monkeypatch.setattr(_download_mod.Nemar, "download", transfer)
+        monkeypatch.setattr(
+            _download_mod.Datalad,
+            "download",
+            lambda *a, **kw: pytest.fail("Muse should use Nemar"),
+        )
         study._download(overwrite=True)
     else:
         write_sessions()

@@ -289,8 +289,8 @@ reconstruction because a sparse wearable montage supports it poorly.
 #
 # An existing copy can be placed directly at ``DATA_DIR/Interaxon2026Muse``;
 # downloaded copies live under ``Interaxon2026Muse/download/nm000287``.
-# Downloading requires git-annex and the existing DataLad backend; it fetches
-# the public repository and its roughly 1.1 GB of recordings directly from NEMAR.
+# The existing NEMAR backend downloads version 1.0.0 through nemar-py,
+# including roughly 1.1 GB of recordings; git-annex is not required.
 # No EEGDash indexing is required. The loader also recognizes ``muse`` and
 # ``nm000287`` as study aliases (the benchmark dataset selector stays
 # ``interaxon2026muse``). Cite Muse Team, *Muse Sleep-Onset EEG*, version 1.0.0,
