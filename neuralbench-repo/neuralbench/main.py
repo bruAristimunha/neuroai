@@ -51,7 +51,7 @@ from .callbacks import (
     PlotRegressionScatter,
     PlotRegressionVectors,
     RecordingLevelEval,
-    ResetAtBoundary,
+    SequentialEvaluation,
     TestFullRetrievalMetrics,
     WindowPredictionCollector,
 )
@@ -272,7 +272,7 @@ class Experiment(BaseExperiment):
         """Create callbacks and setup Trainer."""
         callbacks: list[Callback] = []
         if self.data.sequential_eval:
-            callbacks.append(ResetAtBoundary())
+            callbacks.append(SequentialEvaluation())
         if "confusion_matrix" in [metric.log_name for metric in self.metrics]:
             labels: list[str] | None = None
             if isinstance(self.data.target, ns.extractors.LabelEncoder):

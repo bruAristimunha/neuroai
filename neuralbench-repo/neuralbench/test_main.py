@@ -27,7 +27,7 @@ from neuraltrain.metrics.metrics import GroupedMetric
 from neuraltrain.models.base import BaseModelConfig
 from neuraltrain.optimizers import LightningOptimizer
 
-from .callbacks import ResetAtBoundary, WindowPredictionCollector
+from .callbacks import SequentialEvaluation, WindowPredictionCollector
 from .data import Data
 from .main import Experiment
 from .modules import DownstreamWrapperModel
@@ -84,7 +84,7 @@ def test_wrapped_callback_in_lightning(shape, targets, loss, expected_loss, devi
     trainer = pl.Trainer(
         accelerator=device,
         devices=1,
-        callbacks=[ResetAtBoundary()],
+        callbacks=[SequentialEvaluation()],
         logger=DummyLogger(),
         enable_checkpointing=False,
         enable_progress_bar=False,
@@ -109,7 +109,7 @@ def test_sequential_evaluation_accepts_stateless_models(wrapped):
     if wrapped:
         model = DownstreamWrapperModel(model, torch.Size([1]), None, 1, aggregation=None)
     batch = SimpleNamespace(segments=[SimpleNamespace(timeline="recording")])
-    ResetAtBoundary().on_test_batch_start(
+    SequentialEvaluation().on_test_batch_start(
         SimpleNamespace(world_size=1), SimpleNamespace(model=model), batch, 0
     )
     x = torch.ones(1, 1)

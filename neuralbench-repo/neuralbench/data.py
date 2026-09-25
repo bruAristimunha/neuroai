@@ -288,6 +288,7 @@ class Data(ns.BaseModel):
             split_dataset = dataset.select(dataset.triggers.split == split)
             sequential = self.sequential_eval and split != "train"
             if sequential:
+                # Keep each recording together and feed its context in time order.
                 split_dataset = split_dataset.select(
                     sorted(
                         range(len(split_dataset)),
@@ -307,6 +308,7 @@ class Data(ns.BaseModel):
             loaders[split] = DataLoader(
                 split_dataset,
                 collate_fn=split_dataset.collate_fn,
+                # No later window in the same evaluation batch; training is unchanged.
                 batch_size=1 if sequential else self.batch_size,
                 shuffle=split == "train" and sampler is None,
                 sampler=sampler,
