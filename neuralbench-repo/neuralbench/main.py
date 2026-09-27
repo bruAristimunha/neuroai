@@ -18,6 +18,7 @@ import torch
 import yaml
 from exca import TaskInfra
 from exca.cachedict import CacheDict
+from exca.utils import find_models
 from lightning.pytorch.callbacks import (
     Callback,
     EarlyStopping,
@@ -116,6 +117,20 @@ class Experiment(BaseExperiment):
     infra: TaskInfra = TaskInfra(version="1")
     dummy: dict[str, tp.Any] = {}  # Useful to avoid overwriting experiments between grids
     brain_model_name: str = ""
+
+    @model_validator(mode="after")
+    def _validate_sequential_evaluation(self) -> "Experiment":
+        if not self.data.sequential_eval:
+            return self
+        if self.data.sequential_eval is True and (self.infra.gpus_per_node or 0) > 1:
+            raise ValueError("Sequential validation requires single-device training")
+        losses = find_models(self.loss, BaseLoss, include_private=False)
+        metrics = find_models(self.metrics, BaseMetric, include_private=False)
+        if any(type(loss).__name__ == "ClipLoss" for loss in losses.values()) or any(
+            type(metric).__name__ in {"Rank", "TopkAcc"} for metric in metrics.values()
+        ):
+            raise ValueError("Sequential evaluation does not support in-batch retrieval")
+        return self
 
     @model_validator(mode="after")
     def _populate_brain_model_name(self) -> "Experiment":
@@ -272,7 +287,9 @@ class Experiment(BaseExperiment):
         """Create callbacks and setup Trainer."""
         callbacks: list[Callback] = []
         if self.data.sequential_eval:
-            callbacks.append(SequentialEvaluation())
+            callbacks.append(
+                SequentialEvaluation(validation=self.data.sequential_eval is True)
+            )
         if "confusion_matrix" in [metric.log_name for metric in self.metrics]:
             labels: list[str] | None = None
             if isinstance(self.data.target, ns.extractors.LabelEncoder):

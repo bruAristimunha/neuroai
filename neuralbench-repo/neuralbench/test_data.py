@@ -35,14 +35,38 @@ import neuralset as ns
 from .data import Data, get_default_dataloaders
 
 
-def test_sequential_loader_is_task_independent(build_data):
-    data = build_data(seed=33, sequential_eval=True)
+@pytest.mark.parametrize("mode", [False, True, "test"])
+def test_sequential_loader_is_task_independent(build_data, mode, monkeypatch):
+    apply = ns.dataloader.Segmenter.apply
+
+    def reversed_segments(self, events):
+        dataset = apply(self, events)
+        return dataset.select(list(reversed(range(len(dataset)))))
+
+    monkeypatch.setattr(ns.dataloader.Segmenter, "apply", reversed_segments)
+    data = build_data(seed=33, sequential_eval=mode)
     loaders = data.prepare()
     assert loaders["train"].batch_size == 4
     for split in ("val", "test"):
-        assert loaders[split].batch_size == 1
+        expected = 1 if mode is True or (mode == "test" and split == "test") else 4
+        assert loaders[split].batch_size == expected
         positions = [(s.timeline, s.start) for s in loaders[split].dataset.segments]
-        assert positions == sorted(positions)
+        assert positions == sorted(positions, reverse=expected != 1)
+
+
+@pytest.mark.parametrize("mode", [True, "test"])
+def test_sequential_evaluation_rejects_onset_aligned_crop(build_data, mode):
+    data = build_data(seed=33)
+    config = data.model_dump()
+    config.update(
+        sequential_eval=mode,
+        study={
+            "source": data.study.model_dump(),
+            "targets": {"name": "AddSleepOnsetTargets", "max_pre_n2_s": 1200.0},
+        },
+    )
+    with pytest.raises(ValueError, match="leaks the sleep target"):
+        Data(**config)
 
 
 def _train_indices(loaders: dict[str, DataLoader]) -> list[int]:
