@@ -5,6 +5,7 @@
 # LICENSE file in the root directory of this source tree.
 
 import typing as tp
+import warnings
 from math import log
 from types import SimpleNamespace
 
@@ -109,11 +110,116 @@ def test_sequential_evaluation_accepts_stateless_models(wrapped):
     if wrapped:
         model = DownstreamWrapperModel(model, torch.Size([1]), None, 1, aggregation=None)
     batch = SimpleNamespace(segments=[SimpleNamespace(timeline="recording")])
-    SequentialEvaluation().on_test_batch_start(
+    callback = SequentialEvaluation()
+    with pytest.warns(UserWarning, match="without reset_state"):
+        callback.setup(None, SimpleNamespace(model=model), "test")
+    callback.on_test_batch_start(
         SimpleNamespace(world_size=1), SimpleNamespace(model=model), batch, 0
     )
     x = torch.ones(1, 1)
     torch.testing.assert_close(model(x), x)
+
+
+@pytest.mark.parametrize("validation", [False, True])
+def test_sequential_state_does_not_cross_batches_or_phases(validation):
+    class Model:
+        state = 99
+
+        def reset_state(self):
+            self.state = 0
+
+    model = Model()
+    module = SimpleNamespace(model=model)
+    trainer = SimpleNamespace(world_size=1)
+    callback = SequentialEvaluation(validation=validation)
+    batch = SimpleNamespace(segments=[SimpleNamespace(timeline="night")])
+    for hook, expected in (
+        (callback.on_train_batch_start, [0, 0]),
+        (callback.on_validation_batch_start, [0, 99 if validation else 0]),
+    ):
+        for index, state in enumerate(expected):
+            model.state = 99
+            hook(trainer, module, batch, index)
+            assert model.state == state
+    for hook in (callback.on_validation_end, callback.on_test_end):
+        model.state = 99
+        hook(trainer, module)
+        assert model.state == 0 and callback.previous is None
+
+
+@pytest.mark.parametrize("wrapped", [False, True])
+def test_sequential_warning_respects_wrapper_reset(wrapped):
+    class Model(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.wrapped_model = nn.Identity()
+            self.state = 1
+
+        def reset_state(self):
+            self.state = 0
+
+    backbone = Model()
+    model = (
+        DownstreamWrapperModel(backbone, torch.Size([1]), None, 1, aggregation=None)
+        if wrapped
+        else backbone
+    )
+    module = SimpleNamespace(model=model)
+    callback = SequentialEvaluation()
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        callback.setup(None, module, "test")
+    assert not caught
+    callback.on_train_batch_start(None, module, None, 0)
+    assert backbone.state == 0
+
+
+@pytest.mark.parametrize(
+    "mode,gpus,loss,metrics,error",
+    [
+        (True, 2, {"name": "MSELoss"}, [], "single-device"),
+        ("test", 2, {"name": "MSELoss"}, [], None),
+        (True, 1, {"name": "ClipLoss"}, [], "retrieval"),
+        (
+            "test",
+            1,
+            {"name": "MultiLoss", "losses": {"clip": {"name": "ClipLoss"}}},
+            [],
+            "retrieval",
+        ),
+        (
+            True,
+            1,
+            {"name": "MSELoss"},
+            [{"name": "Rank", "log_name": "rank"}],
+            "retrieval",
+        ),
+        (False, 2, {"name": "ClipLoss"}, [], None),
+        (
+            True,
+            1,
+            {"name": "MSELoss"},
+            [{"name": "MeanAbsoluteError", "log_name": "batch_mae"}],
+            None,
+        ),
+    ],
+)
+def test_sequential_config_guards(build_data, mode, gpus, loss, metrics, error):
+    from pydantic import TypeAdapter
+
+    from neuraltrain.metrics import BaseMetric
+
+    experiment = Experiment.model_construct(
+        data=build_data(seed=33, sequential_eval=mode),
+        infra=TaskInfra(gpus_per_node=gpus),
+        loss=TypeAdapter(BaseLoss).validate_python(loss),
+        metrics=TypeAdapter(list[BaseMetric]).validate_python(metrics),
+    )
+    if error:
+        with pytest.raises(ValueError, match=error):
+            experiment._validate_sequential_evaluation()
+    else:
+        experiment._validate_sequential_evaluation()
 
 
 class _DummyLoss:

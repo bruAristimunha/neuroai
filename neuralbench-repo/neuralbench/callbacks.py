@@ -28,6 +28,8 @@ from tqdm import tqdm
 
 from neuraltrain.metrics.utils import agg_per_group, agg_retrieval_preds
 
+from .modules import DownstreamWrapperModel
+
 if tp.TYPE_CHECKING:
     from neuraltrain.utils import StandardScaler
 
@@ -46,10 +48,34 @@ class SequentialEvaluation(Callback):
     optional ``reset_state()`` hook. Between those boundaries, state is left
     intact so the model can use past windows. Stateless models need no hook.
 
-    Applies to validation, testing and prediction. Prediction loaders must
-    supply the same ordering. Preprocessing and within-window causality remain
-    the caller's responsibility; this callback does not enforce them.
+    ``sequential_eval="test"`` keeps validation batched. Training always uses
+    independent batches: state is cleared before each batch, not carried across
+    shuffled windows. Models must handle the examples within a batch independently.
+    For batched, stateless context, use longer input windows with targets restricted
+    to their scored tail (e.g. ``CroppedExtractor``); that does not itself enforce
+    causal inputs. Preprocessing and within-window causality remain the caller's
+    responsibility. N2-aligned crops can reveal sleep targets by window counting.
     """
+
+    def __init__(self, validation: bool = True):
+        self.validation = validation
+        self.previous = None
+
+    def setup(self, trainer, pl_module, stage):
+        model = pl_module.model
+        while type(model) is DownstreamWrapperModel:
+            model = model.wrapped_model
+        if not hasattr(model, "reset_state"):
+            warnings.warn(
+                "Sequential evaluation without reset_state(): no context is reset. "
+                "Only stateless models are safe without this optional hook.",
+                UserWarning,
+            )
+
+    @staticmethod
+    def _reset(pl_module):
+        if hasattr(pl_module.model, "reset_state"):
+            pl_module.model.reset_state()
 
     def on_test_batch_start(self, trainer, pl_module, batch, batch_idx, dataloader_idx=0):
         if len(batch.segments) != 1 or trainer.world_size != 1:
@@ -57,12 +83,25 @@ class SequentialEvaluation(Callback):
         key = (dataloader_idx, batch.segments[0].timeline)
         # The first batch also resets state when an evaluation pass is repeated.
         if batch_idx == 0 or key != self.previous:
-            if hasattr(pl_module.model, "reset_state"):
-                pl_module.model.reset_state()
+            self._reset(pl_module)
         self.previous = key
 
-    on_validation_batch_start = on_test_batch_start
-    on_predict_batch_start = on_test_batch_start
+    def on_validation_batch_start(
+        self, trainer, pl_module, batch, batch_idx, dataloader_idx=0
+    ):
+        if self.validation:
+            self.on_test_batch_start(trainer, pl_module, batch, batch_idx, dataloader_idx)
+        else:
+            self._reset(pl_module)
+
+    def on_train_batch_start(self, trainer, pl_module, batch, batch_idx):
+        self._reset(pl_module)
+
+    def on_validation_end(self, trainer, pl_module):
+        self._reset(pl_module)
+        self.previous = None
+
+    on_test_end = on_validation_end
 
 
 def _set_plot_theme() -> None:

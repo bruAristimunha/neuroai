@@ -9,7 +9,8 @@ import typing as tp
 
 import numpy as np
 import torch
-from pydantic import Field, field_validator
+from exca.utils import find_models
+from pydantic import Field, field_validator, model_validator
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
@@ -159,7 +160,7 @@ class Data(ns.BaseModel):
     # Dataloaders
     sampler: BaseSampler | None = None
     batch_size: int = 64
-    sequential_eval: bool = False  # Ordered single-window validation and testing.
+    sequential_eval: bool | tp.Literal["test"] = False
     num_workers: int = 0
     drop_last: bool = False
     pin_memory: bool = True
@@ -178,6 +179,20 @@ class Data(ns.BaseModel):
             event_field="subject",
             return_one_hot=False,
         )
+
+    @model_validator(mode="after")
+    def _validate_sequential_crops(self) -> "Data":
+        if self.sequential_eval:
+            from .transforms import AddSleepOnsetTargets
+
+            crops = find_models(self.study, AddSleepOnsetTargets, include_private=False)
+            if any(crop.max_pre_n2_s is not None for crop in crops.values()):
+                raise ValueError(
+                    "Sequential evaluation with max_pre_n2_s leaks the sleep target "
+                    "through window position. Use an onset-independent stream start; "
+                    "removing this crop alone does not certify the source data as causal."
+                )
+        return self
 
     def prepare(self) -> dict[str, DataLoader]:
         """Load events, build extractors, segment data and return train/val/test DataLoaders.
@@ -286,9 +301,10 @@ class Data(ns.BaseModel):
         loaders = {}
         for split in tqdm(["train", "val", "test"], desc="Preparing segments"):
             split_dataset = dataset.select(dataset.triggers.split == split)
-            sequential = self.sequential_eval and split != "train"
+            sequential = self.sequential_eval is True and split != "train"
+            sequential |= self.sequential_eval == "test" and split == "test"
             if sequential:
-                # Keep each recording together and feed its context in time order.
+                # Safeguard ordering for custom studies/segmenters as well as built-ins.
                 split_dataset = split_dataset.select(
                     sorted(
                         range(len(split_dataset)),

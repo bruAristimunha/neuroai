@@ -94,6 +94,34 @@ works and how to customize it by subclassing ``BrainModule``.
 #        return loss
 
 # %%
+# Sequential evaluation
+# ---------------------
+#
+# Set ``data.sequential_eval=true`` for ordered, single-window validation and
+# testing, or ``data.sequential_eval=test`` for testing only. The latter keeps
+# batched validation and multi-GPU training available; validation then selects
+# checkpoints without cross-window context. No task enables this by default.
+#
+# ``SequentialEvaluation`` calls the model's optional ``reset_state()`` at each
+# recording boundary and evaluation restart. Stateful models must implement it;
+# stateless models may omit it (a warning is emitted). The wrapper forwards the
+# hook to its backbone. State is also cleared after evaluation and before every
+# training batch, because shuffled training windows are independent. This is
+# not a stateful sequence-training implementation.
+#
+# For fixed past context, longer inputs with targets restricted to their tail
+# (e.g. ``CroppedExtractor``) remain the batched alternative. Neither approach
+# guarantees causal preprocessing or forbids future samples inside an input.
+# Batch-size-dependent retrieval losses/metrics are rejected. Losses with
+# masked targets can also change their weighting when batch size changes.
+#
+# Sleep-onset crops aligned to N2 are rejected in sequential mode: a model can
+# otherwise recover the target by counting windows. Use an onset-independent
+# recording start, keep total length and annotation metadata out of model
+# inputs, and audit the source cropping and preprocessing before claiming a
+# causal benchmark. The callback does not establish a competition protocol.
+#
+# %%
 # Subclassing BrainModule
 # -----------------------
 #
