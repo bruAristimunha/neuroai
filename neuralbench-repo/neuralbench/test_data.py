@@ -275,14 +275,28 @@ def test_get_default_dataloaders_merges_and_overrides(
     assert cfg.neuro.frequency == 60.0  # dotted override (base default 120.0)
 
 
+@pytest.mark.parametrize(
+    "task,dataset,source",
+    [
+        ("motor_imagery", "schalk2004bci2000", "Schalk2004Bci2000"),
+        ("sleep_onset", "interaxon2026muse", "Interaxon2026Muse"),
+    ],
+)
 def test_get_default_dataloaders_selects_dataset_variant(
     monkeypatch: pytest.MonkeyPatch,
+    task,
+    dataset,
+    source,
 ) -> None:
     captured: list[Data] = []
     monkeypatch.setattr(Data, "prepare", lambda self: captured.append(self))
-    get_default_dataloaders("eeg", "motor_imagery", dataset="schalk2004bci2000")
+    get_default_dataloaders("eeg", task, dataset=dataset)
     study: tp.Any = captured[0].study
-    assert type(study.steps["source"]).__name__ == "Schalk2004Bci2000"
+    assert type(study.steps["source"]).__name__ == source
+    if dataset == "interaxon2026muse":
+        assert captured[0].sequential_eval is False
+        assert study.steps["annotate_sleep_onset"].max_pre_n2_s == 1200
+        assert study.steps["split"].split_by == "subject"
 
 
 @pytest.mark.parametrize(

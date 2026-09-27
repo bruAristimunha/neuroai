@@ -64,10 +64,13 @@ reconstruction because a sparse wearable montage supports it poorly.
 
    Evaluation is sequential and causal according to the organisers: only
    past context is allowed, recording length is hidden, and competitors
-   manage hidden state. The recipe delivers chronological single-window
-   validation/test batches, but inherited whole-recording preprocessing is
-   not causal. Every released recording ends 300 s after N2; neither total
-   length nor onset-aligned crop position is a legitimate predictive input.
+   manage hidden state. This local recipe instead uses batched, independent
+   windows; its N2-aligned crops are rejected by the optional sequential mode
+   because counting windows can reveal the target. Inherited whole-recording
+   preprocessing is not causal either. Every released recording ends 300 s
+   after N2; neither total length nor onset-aligned crop position is a legitimate
+   predictive input. A sealed streaming protocol needs an onset-independent
+   start and a separate audit of source cropping and preprocessing.
 """
 
 # %%

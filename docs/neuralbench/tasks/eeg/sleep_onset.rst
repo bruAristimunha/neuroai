@@ -34,8 +34,9 @@ Description
 Given a continuous EEG recording leading up to sleep, predict at every point in
 time how many seconds remain before the participant falls asleep. Models output
 a single regression value per analysis window, capped at 600 s (10 minutes
-pre-onset). Inference is strictly causal: predictions for window ``[t - 5, t]``
-may only depend on EEG up to time ``t``. The benchmark uses non-overlapping
+pre-onset). The competition requires causal inference: predictions for window
+``[t - 5, t]`` may only depend on EEG up to time ``t``. This local proxy does not
+enforce end-to-end causality in preprocessing. The benchmark uses non-overlapping
 5-s analysis windows -- one model input per 5-s slice of EEG -- so every
 recording yields one prediction every 5 s of pre-onset signal.
 
@@ -79,9 +80,10 @@ the license is CC-BY-NC-SA-4.0.
 This variant retains the starter's subject-disjoint split, preprocessing and
 unweighted bMAE objective. NeuralFetch preserves the supplied session labels
 (500 train / 40 seen-participant test recordings), but the default benchmark
-replaces them in memory. Sequential evaluation orders individual windows;
-it does not make whole-recording preprocessing causal. This recipe is not the
-sealed Muse evaluation or its seen/unseen weighted score.
+replaces them in memory. Evaluation stays batched by default. The optional
+sequential mode rejects this recipe's N2-aligned crop because window position
+would reveal the target. Whole-recording preprocessing is not causal either.
+This recipe is not the sealed Muse evaluation or its seen/unseen weighted score.
 
 The following additional polysomnography datasets can also be used with this
 task. Both expose annotated sleep stages, so ``AddSleepOnsetTargets`` derives
