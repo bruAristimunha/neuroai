@@ -48,11 +48,12 @@ from .aggregator import (  # noqa: F401
     BenchmarkAggregator as BenchmarkAggregator,
 )
 from .callbacks import (
+    CopyModelPerRecording,
     PlotConfusionMatrix,
     PlotRegressionScatter,
     PlotRegressionVectors,
     RecordingLevelEval,
-    SequentialEvaluation,
+    ResetStatePerRecording,
     TestFullRetrievalMetrics,
     WindowPredictionCollector,
 )
@@ -98,6 +99,11 @@ class Experiment(BaseExperiment):
     # When True, raw per-window test predictions/targets are folded into the
     # cached ``run`` result (see ``WindowPredictionCollector``).
     save_test_predictions: bool = False
+    # Recording-boundary callbacks for validation and test, meant for one window
+    # per batch without shuffling: see ResetStatePerRecording and
+    # CopyModelPerRecording.
+    reset_state_per_recording: bool = False
+    copy_model_per_recording: bool = False
 
     # Weights & Biases
     csv_config: CsvLoggerConfig | None = None
@@ -119,17 +125,15 @@ class Experiment(BaseExperiment):
     brain_model_name: str = ""
 
     @model_validator(mode="after")
-    def _validate_sequential_evaluation(self) -> "Experiment":
-        if not self.data.sequential_eval:
+    def _validate_eval_batch_size(self) -> "Experiment":
+        if 1 not in (self.data.val_batch_size, self.data.test_batch_size):
             return self
-        if self.data.sequential_eval is True and (self.infra.gpus_per_node or 0) > 1:
-            raise ValueError("Sequential validation requires single-device training")
         losses = find_models(self.loss, BaseLoss, include_private=False)
         metrics = find_models(self.metrics, BaseMetric, include_private=False)
         if any(type(loss).__name__ == "ClipLoss" for loss in losses.values()) or any(
             type(metric).__name__ in {"Rank", "TopkAcc"} for metric in metrics.values()
         ):
-            raise ValueError("Sequential evaluation does not support in-batch retrieval")
+            raise ValueError("In-batch retrieval needs evaluation batches above one")
         return self
 
     @model_validator(mode="after")
@@ -286,10 +290,10 @@ class Experiment(BaseExperiment):
     def setup_trainer(self, is_test: bool = False) -> pl.Trainer:
         """Create callbacks and setup Trainer."""
         callbacks: list[Callback] = []
-        if self.data.sequential_eval:
-            callbacks.append(
-                SequentialEvaluation(validation=self.data.sequential_eval is True)
-            )
+        if self.copy_model_per_recording:
+            callbacks.append(CopyModelPerRecording())
+        if self.reset_state_per_recording:
+            callbacks.append(ResetStatePerRecording())
         if "confusion_matrix" in [metric.log_name for metric in self.metrics]:
             labels: list[str] | None = None
             if isinstance(self.data.target, ns.extractors.LabelEncoder):

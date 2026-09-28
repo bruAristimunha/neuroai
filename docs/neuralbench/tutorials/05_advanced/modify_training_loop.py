@@ -97,30 +97,35 @@ works and how to customize it by subclassing ``BrainModule``.
 # Sequential evaluation
 # ---------------------
 #
-# Set ``data.sequential_eval=true`` for ordered, single-window validation and
-# testing, or ``data.sequential_eval=test`` for testing only. The latter keeps
-# batched validation and multi-GPU training available; validation then selects
-# checkpoints without cross-window context. No task enables this by default.
+# To feed each recording to a model one window at a time, in time order, set
+# ``data.val_batch_size=1`` and/or ``data.test_batch_size=1``. Validation and
+# test windows are ordered by recording then time unless
+# ``data.val_shuffle``/``data.test_shuffle`` is set. Keeping validation batched
+# (only ``test_batch_size=1``) keeps epochs fast and multi-GPU training
+# available. No task does this by default.
 #
-# ``SequentialEvaluation`` calls the model's optional ``reset_state()`` when an
-# evaluation pass starts, then runs each recording on a fresh deep copy of the
-# model as it was at that point, so no state crosses recordings even without
-# the hook. The wrapper forwards the hook to its backbone. The original model is
-# restored after the pass, and ``reset_state()`` also runs before every
-# training batch, because shuffled training windows are independent. This is
-# not a stateful sequence-training implementation.
+# Two callbacks act whenever a new recording starts:
+#
+# - ``reset_state_per_recording=true`` calls the model's optional
+#   ``reset_state()``, so stateful models know where recordings begin. It also
+#   runs before every training batch, because shuffled training windows are
+#   independent. The wrapper forwards the hook to its backbone.
+# - ``copy_model_per_recording=true`` runs each recording on a fresh copy of
+#   the model as it was when evaluation began, so nothing the model changes
+#   while predicting (weights, buffers, attributes) carries over to the next
+#   recording. The original model is restored when evaluation ends.
 #
 # For fixed past context, longer inputs with targets restricted to their tail
 # (e.g. ``CroppedExtractor``) remain the batched alternative. Neither approach
 # guarantees causal preprocessing or forbids future samples inside an input.
-# Batch-size-dependent retrieval losses/metrics are rejected. Losses with
-# masked targets can also change their weighting when batch size changes.
+# In-batch retrieval losses/metrics are rejected with an evaluation batch size
+# of 1. Losses with masked targets can also change their weighting when batch
+# size changes.
 #
-# Sleep-onset crops aligned to N2 are rejected in sequential mode: a model can
-# otherwise recover the target by counting windows. Use an onset-independent
-# recording start, keep total length and annotation metadata out of model
-# inputs, and audit the source cropping and preprocessing before claiming a
-# causal benchmark. The callback does not establish a competition protocol.
+# Where a recording starts can itself reveal the target (e.g. a crop that ends
+# at sleep onset); use an onset-independent start, keep total length and
+# annotation metadata out of model inputs, and audit the source cropping and
+# preprocessing before claiming a causal benchmark.
 #
 # %%
 # Subclassing BrainModule

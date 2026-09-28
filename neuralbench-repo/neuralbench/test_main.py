@@ -27,7 +27,11 @@ from neuraltrain.metrics.metrics import GroupedMetric
 from neuraltrain.models.base import BaseModelConfig
 from neuraltrain.optimizers import LightningOptimizer
 
-from .callbacks import SequentialEvaluation, WindowPredictionCollector
+from .callbacks import (
+    CopyModelPerRecording,
+    ResetStatePerRecording,
+    WindowPredictionCollector,
+)
 from .data import Data
 from .main import Experiment
 from .modules import DownstreamWrapperModel
@@ -84,7 +88,7 @@ def test_wrapped_callback_in_lightning(shape, targets, loss, expected_loss, devi
     trainer = pl.Trainer(
         accelerator=device,
         devices=1,
-        callbacks=[SequentialEvaluation()],
+        callbacks=[CopyModelPerRecording(), ResetStatePerRecording()],
         logger=DummyLogger(),
         enable_checkpointing=False,
         enable_progress_bar=False,
@@ -104,20 +108,20 @@ def test_wrapped_callback_in_lightning(shape, targets, loss, expected_loss, devi
 
 
 @pytest.mark.parametrize("wrapped", [False, True])
-def test_sequential_evaluation_accepts_stateless_models(wrapped):
+def test_per_recording_callbacks_accept_stateless_models(wrapped):
     model = nn.Identity()
     if wrapped:
         model = DownstreamWrapperModel(model, torch.Size([1]), None, 1, aggregation=None)
     batch = SimpleNamespace(segments=[SimpleNamespace(timeline="recording")])
     module = SimpleNamespace(model=model)
-    callback = SequentialEvaluation()
-    callback.on_test_start(None, module)
-    callback.on_test_batch_start(SimpleNamespace(world_size=1), module, batch, 0)
+    for callback in (CopyModelPerRecording(), ResetStatePerRecording()):
+        callback.on_test_start(None, module)
+        callback.on_test_batch_start(None, module, batch, 0)
     x = torch.ones(1, 1)
     torch.testing.assert_close(module.model(x), x)
 
 
-def test_sequential_evaluation_restores_model_without_reset_state():
+def test_copy_model_per_recording_discards_changes():
     class Model(nn.Module):
         def __init__(self):
             super().__init__()
@@ -131,51 +135,44 @@ def test_sequential_evaluation_restores_model_without_reset_state():
 
     model = Model()
     module = SimpleNamespace(model=model)
-    trainer = SimpleNamespace(world_size=1)
-    callback = SequentialEvaluation()
-    callback.on_test_start(trainer, module)
+    callback = CopyModelPerRecording()
+    callback.on_validation_start(None, module)
     for index, night in enumerate(["a", "a", "b"]):
         batch = SimpleNamespace(segments=[SimpleNamespace(timeline=night)])
-        callback.on_test_batch_start(trainer, module, batch, index)
+        callback.on_validation_batch_start(None, module, batch, index)
         module.model(index)
         if night == "a":
             assert module.model.memory == list(range(index + 1))
     assert module.model.memory == [2] and module.model.weight.item() == 1
-    callback.on_test_end(trainer, module)
+    callback.on_validation_end(None, module)
     assert module.model is model and model.weight.item() == 0 and not model.memory
 
 
-@pytest.mark.parametrize("validation", [False, True])
-def test_sequential_state_does_not_cross_batches_or_phases(validation):
+def test_reset_state_per_recording_boundaries():
     class Model:
         state = 99
 
         def reset_state(self):
             self.state = 0
 
-    model = Model()
-    module = SimpleNamespace(model=model)
-    trainer = SimpleNamespace(world_size=1)
-    callback = SequentialEvaluation(validation=validation)
-    batch = SimpleNamespace(segments=[SimpleNamespace(timeline="night")])
+    module = SimpleNamespace(model=Model())
+    callback = ResetStatePerRecording()
     for index in range(2):
-        model.state = 99
-        callback.on_train_batch_start(trainer, module, batch, index)
-        assert model.state == 0
-    callback.on_validation_start(trainer, module)
-    for index, state in enumerate([0, 99 if validation else 0]):
         module.model.state = 99
-        callback.on_validation_batch_start(trainer, module, batch, index)
-        assert module.model.state == state
-    for hook in (callback.on_validation_end, callback.on_test_end):
+        callback.on_train_batch_start(None, module, None, index)
+        assert module.model.state == 0
+    nights = [["a"], ["a"], ["a", "b"], ["b"], ["b"]]
+    for index, (timelines, reset) in enumerate(zip(nights, [1, 0, 1, 1, 0])):
         module.model.state = 99
-        hook(trainer, module)
-        assert module.model is model and model.state == 0
-        assert callback.previous is None
+        batch = SimpleNamespace(segments=[SimpleNamespace(timeline=t) for t in timelines])
+        callback.on_test_batch_start(None, module, batch, index)
+        assert module.model.state == (0 if reset else 99)
+    callback.on_test_end(None, module)
+    assert callback.previous is None
 
 
 @pytest.mark.parametrize("wrapped", [False, True])
-def test_sequential_reset_reaches_wrapped_backbone(wrapped):
+def test_reset_state_reaches_wrapped_backbone(wrapped):
     class Model(nn.Module):
         def __init__(self):
             super().__init__()
@@ -192,34 +189,24 @@ def test_sequential_reset_reaches_wrapped_backbone(wrapped):
         else backbone
     )
     module = SimpleNamespace(model=model)
-    callback = SequentialEvaluation()
+    callback = ResetStatePerRecording()
     callback.on_train_batch_start(None, module, None, 0)
     assert backbone.state == 0
 
 
 @pytest.mark.parametrize(
-    "mode,gpus,loss,metrics,error",
+    "test_batch_size,loss,metrics,error",
     [
-        (True, 2, {"name": "MSELoss"}, [], "single-device"),
-        ("test", 2, {"name": "MSELoss"}, [], None),
-        (True, 1, {"name": "ClipLoss"}, [], "retrieval"),
+        (1, {"name": "ClipLoss"}, [], "retrieval"),
         (
-            "test",
             1,
             {"name": "MultiLoss", "losses": {"clip": {"name": "ClipLoss"}}},
             [],
             "retrieval",
         ),
+        (1, {"name": "MSELoss"}, [{"name": "Rank", "log_name": "rank"}], "retrieval"),
+        (None, {"name": "ClipLoss"}, [], None),
         (
-            True,
-            1,
-            {"name": "MSELoss"},
-            [{"name": "Rank", "log_name": "rank"}],
-            "retrieval",
-        ),
-        (False, 2, {"name": "ClipLoss"}, [], None),
-        (
-            True,
             1,
             {"name": "MSELoss"},
             [{"name": "MeanAbsoluteError", "log_name": "batch_mae"}],
@@ -227,22 +214,21 @@ def test_sequential_reset_reaches_wrapped_backbone(wrapped):
         ),
     ],
 )
-def test_sequential_config_guards(build_data, mode, gpus, loss, metrics, error):
+def test_eval_batch_size_guard(build_data, test_batch_size, loss, metrics, error):
     from pydantic import TypeAdapter
 
     from neuraltrain.metrics import BaseMetric
 
     experiment = Experiment.model_construct(
-        data=build_data(seed=33, sequential_eval=mode),
-        infra=TaskInfra(gpus_per_node=gpus),
+        data=build_data(seed=33, test_batch_size=test_batch_size),
         loss=TypeAdapter(BaseLoss).validate_python(loss),
         metrics=TypeAdapter(list[BaseMetric]).validate_python(metrics),
     )
     if error:
         with pytest.raises(ValueError, match=error):
-            experiment._validate_sequential_evaluation()
+            experiment._validate_eval_batch_size()
     else:
-        experiment._validate_sequential_evaluation()
+        experiment._validate_eval_batch_size()
 
 
 class _DummyLoss:

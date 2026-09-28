@@ -363,9 +363,9 @@ class AddSleepOnsetTargets(_transf.EventsTransform):
         Stage label used to identify N2 sleep in ``SleepStage.stage``.
     random_start_splits : tuple of str
         Splits whose marker starts at a uniformly random time in that span,
-        leaving at least ``min_duration_s`` before its end. For sequential
-        evaluation: with a fixed start, a stateful model can read the target
-        off the time elapsed since its reset.
+        leaving at least ``min_duration_s`` before its end. For evaluation one
+        window at a time: with a fixed start, a stateful model can read the
+        target off the time elapsed since the recording began.
     min_duration_s : float
         Shortest marker a random start may leave, so each recording keeps a
         segment.

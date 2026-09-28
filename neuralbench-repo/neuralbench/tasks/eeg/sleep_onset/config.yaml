@@ -18,7 +18,8 @@ data:
     annotate_sleep_onset:
       name: AddSleepOnsetTargets
       max_pre_n2_s: 1200.0
-  shuffle_eval: true
+  val_shuffle: true
+  test_shuffle: true
   # Sleep-EDF (Kemp2000) recordings only expose bipolar derivations (Fpz-Cz,
   # Pz-Oz) whose MNE ch_locs are NaN, so the default ``ch_locs``-derived
   # position mapping in ``ChannelPositions`` produces all-``INVALID_VALUE``

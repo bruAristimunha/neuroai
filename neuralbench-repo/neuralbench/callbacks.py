@@ -35,82 +35,93 @@ if tp.TYPE_CHECKING:
 LOGGER = logging.getLogger(__name__)
 
 
-class SequentialEvaluation(Callback):
-    """Let stateful models accumulate context within, but not across, recordings.
+class _PerRecording(Callback):
+    """Run ``_start_recording`` before each evaluation batch that brings a new recording.
 
-    With ``data.sequential_eval=True``, the dataloader groups windows by
-    recording and orders them by start time. It delivers one window per batch
-    so later windows cannot supply context to an earlier prediction.
-
-    This callback requires a single device to keep that stream on one model.
-    When a sequential pass starts, it calls the model's optional
-    ``reset_state()`` hook and snapshots the model; each recording then runs on
-    a fresh deep copy of that snapshot, so no state crosses recordings even if
-    ``reset_state()`` is missing or incomplete. Between those boundaries, state
-    is left intact so the model can use past windows. The model is swapped back
-    at the end of the pass, so training and checkpoints never see the copies.
-    Code running in the same process can still bypass this; it guards against
-    mistakes, not adversarial submissions.
-
-    ``sequential_eval="test"`` keeps validation batched. Training always uses
-    independent batches: state is cleared before each batch, not carried across
-    shuffled windows. Models must handle the examples within a batch independently.
-    For batched, stateless context, use longer input windows with targets restricted
-    to their scored tail (e.g. ``CroppedExtractor``); that does not itself enforce
-    causal inputs. Preprocessing and within-window causality remain the caller's
-    responsibility. N2-aligned crops can reveal sleep targets by window counting.
+    A batch counts as new when its set of recordings differs from the previous
+    batch's, or when it opens an evaluation pass. With evaluation windows in
+    recording then time order and one window per batch (``Data.val_batch_size``
+    and ``Data.test_batch_size`` set to 1, no shuffling), this fires exactly at
+    recording boundaries, and a model sees each recording forward in time with
+    no later window in the same batch. With larger or shuffled batches it
+    fires more often, never less.
     """
 
-    def __init__(self, validation: bool = True):
-        self.validation = validation
-        self.previous = None
-        self.original: nn.Module | None = None
-        self.pristine: nn.Module | None = None
+    def __init__(self) -> None:
+        self.previous: tuple[int, frozenset[str]] | None = None
 
-    @staticmethod
-    def _reset(pl_module):
-        if hasattr(pl_module.model, "reset_state"):
-            pl_module.model.reset_state()
-
-    def on_test_start(self, trainer, pl_module):
-        self._reset(pl_module)
-        self.original = pl_module.model
-        self.pristine = copy.deepcopy(pl_module.model)
-
-    def on_validation_start(self, trainer, pl_module):
-        if self.validation:
-            self.on_test_start(trainer, pl_module)
+    def _start_recording(self, pl_module) -> None:
+        raise NotImplementedError
 
     def on_test_batch_start(self, trainer, pl_module, batch, batch_idx, dataloader_idx=0):
-        if len(batch.segments) != 1 or trainer.world_size != 1:
-            raise ValueError("Sequential evaluation requires one window and one device")
-        if self.pristine is None:
-            raise RuntimeError("Sequential evaluation batch before the pass started")
-        key = (dataloader_idx, batch.segments[0].timeline)
-        # The first batch also resets state when an evaluation pass is repeated.
+        key = (dataloader_idx, frozenset(s.timeline for s in batch.segments))
         if batch_idx == 0 or key != self.previous:
-            pl_module.model = copy.deepcopy(self.pristine)
+            self._start_recording(pl_module)
         self.previous = key
 
     def on_validation_batch_start(
         self, trainer, pl_module, batch, batch_idx, dataloader_idx=0
     ):
-        if self.validation:
-            self.on_test_batch_start(trainer, pl_module, batch, batch_idx, dataloader_idx)
-        else:
-            self._reset(pl_module)
+        self.on_test_batch_start(trainer, pl_module, batch, batch_idx, dataloader_idx)
 
-    def on_train_batch_start(self, trainer, pl_module, batch, batch_idx):
-        self._reset(pl_module)
+    def on_test_end(self, trainer, pl_module):
+        self.previous = None
 
     def on_validation_end(self, trainer, pl_module):
+        self.on_test_end(trainer, pl_module)
+
+
+class ResetStatePerRecording(_PerRecording):
+    """Call the model's optional ``reset_state()`` whenever a new recording starts.
+
+    This tells stateful models where recordings begin, so they accumulate
+    context within a recording only. State is also reset before every training
+    batch, as shuffled training windows are independent. Stateless models need
+    no hook; ``DownstreamWrapperModel`` forwards it to its backbone.
+    """
+
+    def _start_recording(self, pl_module):
+        if hasattr(pl_module.model, "reset_state"):
+            pl_module.model.reset_state()
+
+    def on_train_batch_start(self, trainer, pl_module, batch, batch_idx):
+        self._start_recording(pl_module)
+
+
+class CopyModelPerRecording(_PerRecording):
+    """Run each recording on a fresh copy of the model as it was when evaluation began.
+
+    Whatever the model changes while predicting (weights, buffers, attributes)
+    is discarded at the next recording, so it cannot fine-tune on, or gather
+    statistics from, the evaluation split. The original model is swapped back
+    when evaluation ends, so training and checkpoints never see the copies.
+    Code running in the same process can still bypass this; it guards against
+    mistakes, not adversarial submissions. Place it before
+    :class:`ResetStatePerRecording` so each copy is reset.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.original: nn.Module | None = None
+        self.pristine: nn.Module | None = None
+
+    def on_test_start(self, trainer, pl_module):
+        self.original = pl_module.model
+        self.pristine = copy.deepcopy(pl_module.model)
+
+    def on_validation_start(self, trainer, pl_module):
+        self.on_test_start(trainer, pl_module)
+
+    def _start_recording(self, pl_module):
+        if self.pristine is None:
+            raise RuntimeError(f"{type(self).__name__}: batch before evaluation began")
+        pl_module.model = copy.deepcopy(self.pristine)
+
+    def on_test_end(self, trainer, pl_module):
+        super().on_test_end(trainer, pl_module)
         if self.original is not None:
             pl_module.model = self.original
         self.original = self.pristine = None
-        self._reset(pl_module)
-        self.previous = None
-
-    on_test_end = on_validation_end
 
 
 def _set_plot_theme() -> None:

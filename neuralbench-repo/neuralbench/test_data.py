@@ -35,8 +35,7 @@ import neuralset as ns
 from .data import Data, get_default_dataloaders
 
 
-@pytest.mark.parametrize("mode", [False, True, "test"])
-def test_sequential_loader_is_task_independent(build_data, mode, monkeypatch):
+def test_eval_loader_batch_size_and_order(build_data, monkeypatch):
     apply = ns.dataloader.Segmenter.apply
 
     def reversed_segments(self, events):
@@ -44,42 +43,14 @@ def test_sequential_loader_is_task_independent(build_data, mode, monkeypatch):
         return dataset.select(list(reversed(range(len(dataset)))))
 
     monkeypatch.setattr(ns.dataloader.Segmenter, "apply", reversed_segments)
-    data = build_data(seed=33, sequential_eval=mode)
-    loaders = data.prepare()
-    assert loaders["train"].batch_size == 4
-    for split in ("val", "test"):
-        expected = 1 if mode is True or (mode == "test" and split == "test") else 4
-        assert loaders[split].batch_size == expected
-        positions = [(s.timeline, s.start) for s in loaders[split].dataset.segments]
-        assert positions == sorted(positions, reverse=expected != 1)
-
-
-@pytest.mark.parametrize("mode", [True, "test"])
-def test_sequential_evaluation_rejects_onset_aligned_crop(build_data, mode):
-    data = build_data(seed=33)
-    config = data.model_dump()
-    config.update(
-        sequential_eval=mode,
-        study={
-            "source": data.study.model_dump(),
-            "targets": {"name": "AddSleepOnsetTargets", "max_pre_n2_s": 1200.0},
-        },
-    )
-    with pytest.raises(ValueError, match="leaks the sleep target"):
-        Data(**config)
-    config["study"]["targets"]["random_start_splits"] = ["val", "test"]
-    Data(**config)
-
-
-def test_shuffle_eval_permutes_val_and_test(build_data):
-    ordered = build_data(seed=33).prepare()
-    shuffled = build_data(seed=33, shuffle_eval=True).prepare()
+    ordered = build_data(seed=33, val_batch_size=1, test_batch_size=2).prepare()
+    shuffled = build_data(seed=33, val_shuffle=True, test_shuffle=True).prepare()
+    assert [ordered[split].batch_size for split in ("train", "val", "test")] == [4, 1, 2]
     for split in ("val", "test"):
         before = [(s.timeline, s.start) for s in ordered[split].dataset.segments]
         after = [(s.timeline, s.start) for s in shuffled[split].dataset.segments]
-        assert after != before and sorted(after) == sorted(before)
-    with pytest.raises(ValueError, match="shuffle_eval conflicts"):
-        build_data(seed=33, shuffle_eval=True, sequential_eval=True)
+        assert before == sorted(before)
+        assert after != before and sorted(after) == before
 
 
 def _train_indices(loaders: dict[str, DataLoader]) -> list[int]:

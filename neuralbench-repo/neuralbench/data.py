@@ -9,8 +9,7 @@ import typing as tp
 
 import numpy as np
 import torch
-from exca.utils import find_models
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, field_validator
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
@@ -52,7 +51,7 @@ class BaseSampler(ns.base.NamedModel):
     ``sampler: {name: ClassificationSampler}``.
 
     Only the training DataLoader uses the configured sampler; the val and
-    test DataLoaders always iterate the dataset in order.
+    test order is set by ``Data.val_shuffle`` and ``Data.test_shuffle``.
     """
 
     def build(
@@ -160,10 +159,13 @@ class Data(ns.BaseModel):
     # Dataloaders
     sampler: BaseSampler | None = None
     batch_size: int = 64
-    sequential_eval: bool | tp.Literal["test"] = False
-    # Mix recordings across the batches of non-sequential evaluation splits, so a
-    # model cannot pool the windows of one recording (e.g. rank them by time).
-    shuffle_eval: bool = False
+    # Validation and test batch sizes; None uses batch_size.
+    val_batch_size: int | None = None
+    test_batch_size: int | None = None
+    # Validation and test order: by recording then time (False), or a seeded
+    # permutation that mixes recordings across batches (True).
+    val_shuffle: bool = False
+    test_shuffle: bool = False
     num_workers: int = 0
     drop_last: bool = False
     pin_memory: bool = True
@@ -177,37 +179,11 @@ class Data(ns.BaseModel):
 
     def model_post_init(self, __context):
         super().model_post_init(__context)
-        if self.sequential_eval is True and self.shuffle_eval:
-            raise ValueError(
-                "shuffle_eval conflicts with sequential_eval=True, which keeps both "
-                "evaluation splits in time order; use sequential_eval='test' to "
-                "shuffle validation only."
-            )
         self._subject_id = ns.extractors.LabelEncoder(
             event_types=self.neuro.event_types,
             event_field="subject",
             return_one_hot=False,
         )
-
-    @model_validator(mode="after")
-    def _validate_sequential_crops(self) -> "Data":
-        if self.sequential_eval:
-            from .transforms import AddSleepOnsetTargets
-
-            sequential = {"val", "test"} if self.sequential_eval is True else {"test"}
-            crops = find_models(self.study, AddSleepOnsetTargets, include_private=False)
-            if any(
-                crop.max_pre_n2_s is not None
-                and not sequential <= set(crop.random_start_splits)
-                for crop in crops.values()
-            ):
-                raise ValueError(
-                    "Sequential evaluation with max_pre_n2_s leaks the sleep target "
-                    "through window position. Use an onset-independent stream start, "
-                    f"e.g. random_start_splits={sorted(sequential)}; removing this crop "
-                    "alone does not certify the source data as causal."
-                )
-        return self
 
     def prepare(self) -> dict[str, DataLoader]:
         """Load events, build extractors, segment data and return train/val/test DataLoaders.
@@ -314,23 +290,23 @@ class Data(ns.BaseModel):
 
         # Create the dataloaders
         loaders = {}
+        batch_sizes = {
+            "train": self.batch_size,
+            "val": self.val_batch_size or self.batch_size,
+            "test": self.test_batch_size or self.batch_size,
+        }
+        shuffles = {"val": self.val_shuffle, "test": self.test_shuffle}
         for split in tqdm(["train", "val", "test"], desc="Preparing segments"):
             split_dataset = dataset.select(dataset.triggers.split == split)
-            sequential = self.sequential_eval is True and split != "train"
-            sequential |= self.sequential_eval == "test" and split == "test"
-            if sequential:
-                # Safeguard ordering for custom studies/segmenters as well as built-ins.
-                split_dataset = split_dataset.select(
-                    sorted(
-                        range(len(split_dataset)),
-                        key=lambda i: (
-                            split_dataset.segments[i].timeline,
-                            split_dataset.segments[i].start,
-                        ),
-                    )
-                )
-            elif self.shuffle_eval and split != "train":
+            if shuffles.get(split):
                 order = np.random.default_rng(self.seed).permutation(len(split_dataset))
+                split_dataset = split_dataset.select(order)
+            elif split != "train":
+                # Explicit order, so stateful models see each recording forward in time.
+                segments = split_dataset.segments
+                order = np.lexsort(
+                    ([s.start for s in segments], [s.timeline for s in segments])
+                )
                 split_dataset = split_dataset.select(order)
             LOGGER.info(f"# {split} segments: {len(split_dataset)} \n")
 
@@ -342,8 +318,7 @@ class Data(ns.BaseModel):
             loaders[split] = DataLoader(
                 split_dataset,
                 collate_fn=split_dataset.collate_fn,
-                # No later window in the same evaluation batch; training is unchanged.
-                batch_size=1 if sequential else self.batch_size,
+                batch_size=batch_sizes[split],
                 shuffle=split == "train" and sampler is None,
                 sampler=sampler,
                 num_workers=self.num_workers,
