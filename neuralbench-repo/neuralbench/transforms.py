@@ -363,10 +363,10 @@ class AddSleepOnsetTargets(_transf.EventsTransform):
         Stage label used to identify N2 sleep in ``SleepStage.stage``.
     random_start_splits : tuple of str
         Splits whose marker starts at a uniformly random time in that span,
-        leaving at least ``min_duration_s`` before its end. For evaluation one
+        leaving at least ``min_pre_n2_s`` before its end. For evaluation one
         window at a time: with a fixed start, a stateful model can read the
         target off the time elapsed since the recording began.
-    min_duration_s : float
+    min_pre_n2_s : float
         Shortest marker a random start may leave, so each recording keeps a
         segment.
     seed : int
@@ -377,7 +377,7 @@ class AddSleepOnsetTargets(_transf.EventsTransform):
     max_pre_n2_s: float | None = None
     n2_stage: str = "N2"
     random_start_splits: tuple[str, ...] = ()
-    min_duration_s: float = 5.0
+    min_pre_n2_s: float = 5.0
     seed: int = 0
 
     def _emit_for_timeline(self, evs: pd.DataFrame, timeline: str) -> pd.DataFrame:
@@ -405,12 +405,9 @@ class AddSleepOnsetTargets(_transf.EventsTransform):
                     "one split per timeline (split by subject or timeline)."
                 )
             marker["split"] = splits[0]
-            if (
-                splits[0] in self.random_start_splits
-                and t_stop - self.min_duration_s > t0
-            ):
+            if splits[0] in self.random_start_splits and t_stop - self.min_pre_n2_s > t0:
                 rng = np.random.default_rng([self.seed, zlib.crc32(timeline.encode())])
-                t0 = rng.uniform(t0, t_stop - self.min_duration_s)
+                t0 = rng.uniform(t0, t_stop - self.min_pre_n2_s)
         return pd.DataFrame([dict(marker, start=t0, duration=t_stop - t0, stop=t_stop)])
 
     def _run(self, events: pd.DataFrame) -> pd.DataFrame:

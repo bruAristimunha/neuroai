@@ -35,28 +35,48 @@ if tp.TYPE_CHECKING:
 LOGGER = logging.getLogger(__name__)
 
 
-class _PerRecording(Callback):
-    """Run ``_start_recording`` before each evaluation batch that brings a new recording.
+class ResetPerTimeline(Callback):
+    """Run each evaluation timeline on a fresh copy of the model, with its state reset.
 
-    A batch counts as new when its set of recordings differs from the previous
-    batch's, or when it opens an evaluation pass. With evaluation windows in
-    recording then time order and one window per batch (``Data.val_batch_size``
-    and ``Data.test_batch_size`` set to 1, no shuffling), this fires exactly at
-    recording boundaries, and a model sees each recording forward in time with
-    no later window in the same batch. With larger or shuffled batches it
+    A timeline starts at each evaluation batch whose set of timelines differs
+    from the previous batch's, or that opens an evaluation pass. With windows in
+    timeline then time order and one window per batch (``Data.val_batch_size``
+    and ``Data.test_batch_size`` set to 1, no shuffling), this is exactly each
+    new timeline, seen forward in time. With larger or shuffled batches it
     fires more often, never less.
+
+    Each copy is taken from the model as it was when evaluation began, and its
+    optional ``reset_state()`` is called, so nothing the model changes while
+    predicting (weights, buffers, attributes) carries over to the next
+    timeline. The original model is restored when evaluation ends, so training
+    and checkpoints never see the copies. ``reset_state()`` is also called
+    before every training batch, as shuffled training windows are independent.
     """
 
     def __init__(self) -> None:
+        self.original: nn.Module | None = None
         self.previous: tuple[int, frozenset[str]] | None = None
 
-    def _start_recording(self, pl_module) -> None:
-        raise NotImplementedError
+    @staticmethod
+    def _reset_state(model: nn.Module) -> None:
+        reset_state = getattr(model, "reset_state", None)
+        if reset_state is not None:
+            reset_state()
+
+    def on_train_batch_start(self, trainer, pl_module, batch, batch_idx):
+        self._reset_state(pl_module.model)
+
+    def on_test_start(self, trainer, pl_module):
+        self.original = pl_module.model
+
+    def on_validation_start(self, trainer, pl_module):
+        self.on_test_start(trainer, pl_module)
 
     def on_test_batch_start(self, trainer, pl_module, batch, batch_idx, dataloader_idx=0):
         key = (dataloader_idx, frozenset(s.timeline for s in batch.segments))
         if batch_idx == 0 or key != self.previous:
-            self._start_recording(pl_module)
+            pl_module.model = copy.deepcopy(self.original)
+            self._reset_state(pl_module.model)
         self.previous = key
 
     def on_validation_batch_start(
@@ -65,63 +85,11 @@ class _PerRecording(Callback):
         self.on_test_batch_start(trainer, pl_module, batch, batch_idx, dataloader_idx)
 
     def on_test_end(self, trainer, pl_module):
-        self.previous = None
+        pl_module.model = self.original
+        self.original = self.previous = None
 
     def on_validation_end(self, trainer, pl_module):
         self.on_test_end(trainer, pl_module)
-
-
-class ResetStatePerRecording(_PerRecording):
-    """Call the model's optional ``reset_state()`` whenever a new recording starts.
-
-    This tells stateful models where recordings begin, so they accumulate
-    context within a recording only. State is also reset before every training
-    batch, as shuffled training windows are independent. Stateless models need
-    no hook; ``DownstreamWrapperModel`` forwards it to its backbone.
-    """
-
-    def _start_recording(self, pl_module):
-        if hasattr(pl_module.model, "reset_state"):
-            pl_module.model.reset_state()
-
-    def on_train_batch_start(self, trainer, pl_module, batch, batch_idx):
-        self._start_recording(pl_module)
-
-
-class CopyModelPerRecording(_PerRecording):
-    """Run each recording on a fresh copy of the model as it was when evaluation began.
-
-    Whatever the model changes while predicting (weights, buffers, attributes)
-    is discarded at the next recording, so it cannot fine-tune on, or gather
-    statistics from, the evaluation split. The original model is swapped back
-    when evaluation ends, so training and checkpoints never see the copies.
-    Code running in the same process can still bypass this; it guards against
-    mistakes, not adversarial submissions. Place it before
-    :class:`ResetStatePerRecording` so each copy is reset.
-    """
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.original: nn.Module | None = None
-        self.pristine: nn.Module | None = None
-
-    def on_test_start(self, trainer, pl_module):
-        self.original = pl_module.model
-        self.pristine = copy.deepcopy(pl_module.model)
-
-    def on_validation_start(self, trainer, pl_module):
-        self.on_test_start(trainer, pl_module)
-
-    def _start_recording(self, pl_module):
-        if self.pristine is None:
-            raise RuntimeError(f"{type(self).__name__}: batch before evaluation began")
-        pl_module.model = copy.deepcopy(self.pristine)
-
-    def on_test_end(self, trainer, pl_module):
-        super().on_test_end(trainer, pl_module)
-        if self.original is not None:
-            pl_module.model = self.original
-        self.original = self.pristine = None
 
 
 def _set_plot_theme() -> None:

@@ -97,35 +97,23 @@ works and how to customize it by subclassing ``BrainModule``.
 # Sequential evaluation
 # ---------------------
 #
-# To feed each recording to a model one window at a time, in time order, set
-# ``data.val_batch_size=1`` and/or ``data.test_batch_size=1``. Validation and
-# test windows are ordered by recording then time unless
+# To feed each timeline (recording) to a model one window at a time, in time
+# order, set ``data.val_batch_size=1`` and/or ``data.test_batch_size=1``.
+# Validation and test windows are ordered by timeline then time unless
 # ``data.val_shuffle``/``data.test_shuffle`` is set. Keeping validation batched
 # (only ``test_batch_size=1``) keeps epochs fast and multi-GPU training
 # available. No task does this by default.
 #
-# Two callbacks act whenever a new recording starts:
-#
-# - ``reset_state_per_recording=true`` calls the model's optional
-#   ``reset_state()``, so stateful models know where recordings begin. It also
-#   runs before every training batch, because shuffled training windows are
-#   independent. The wrapper forwards the hook to its backbone.
-# - ``copy_model_per_recording=true`` runs each recording on a fresh copy of
-#   the model as it was when evaluation began, so nothing the model changes
-#   while predicting (weights, buffers, attributes) carries over to the next
-#   recording. The original model is restored when evaluation ends.
-#
-# For fixed past context, longer inputs with targets restricted to their tail
-# (e.g. ``CroppedExtractor``) remain the batched alternative. Neither approach
-# guarantees causal preprocessing or forbids future samples inside an input.
-# In-batch retrieval losses/metrics are rejected with an evaluation batch size
-# of 1. Losses with masked targets can also change their weighting when batch
-# size changes.
-#
-# Where a recording starts can itself reveal the target (e.g. a crop that ends
-# at sleep onset); use an onset-independent start, keep total length and
-# annotation metadata out of model inputs, and audit the source cropping and
-# preprocessing before claiming a causal benchmark.
+# ``reset_per_timeline=true`` adds a PyTorch Lightning
+# `callback <https://lightning.ai/docs/pytorch/stable/extensions/callbacks.html>`_
+# that acts whenever a new timeline starts during evaluation. It runs the
+# timeline on a fresh copy of the model as it was when evaluation began, and
+# calls the copy's optional ``reset_state()``, so stateful models know where
+# timelines begin and nothing the model changes while predicting (weights,
+# buffers, attributes) carries over to the next timeline. The original model is
+# restored when evaluation ends. ``reset_state()`` also runs before every
+# training batch, because shuffled training windows are independent. The
+# wrapper forwards the hook to its backbone.
 #
 # %%
 # Subclassing BrainModule

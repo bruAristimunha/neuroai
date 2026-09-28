@@ -679,7 +679,7 @@ class DownstreamWrapperModel(nn.Module):
     """
 
     def reset_state(self) -> None:
-        """Forward recording boundaries to a stateful backbone, when present."""
+        """Call the backbone's ``reset_state()``, when it has one."""
         if hasattr(self.wrapped_model, "reset_state"):
             tp.cast(tp.Callable[[], None], self.wrapped_model.reset_state)()
 

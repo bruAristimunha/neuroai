@@ -162,8 +162,8 @@ class Data(ns.BaseModel):
     # Validation and test batch sizes; None uses batch_size.
     val_batch_size: int | None = None
     test_batch_size: int | None = None
-    # Validation and test order: by recording then time (False), or a seeded
-    # permutation that mixes recordings across batches (True).
+    # Unshuffled order is by timeline then time; train_shuffle is ignored with a sampler.
+    train_shuffle: bool = True
     val_shuffle: bool = False
     test_shuffle: bool = False
     num_workers: int = 0
@@ -257,9 +257,9 @@ class Data(ns.BaseModel):
             dataset = dataset.select(keep)
 
         # Derive four independent RNG streams from ``self.seed`` so that each
-        # consumer (train DataLoader shuffle + train worker base-seeds, train
-        # WeightedRandomSampler multinomial draws, val worker base-seeds,
-        # test worker base-seeds) is a pure function of its own sub-seed.
+        # consumer (per-split DataLoader shuffle + worker base-seeds for train,
+        # val and test, train WeightedRandomSampler multinomial draws) is a pure
+        # function of its own sub-seed.
         # Per-split DataLoader generators matter when ``num_workers > 0``:
         # ``DataLoader.__iter__`` consumes one int64 from ``generator`` to
         # derive each worker's base seed, so sharing one generator across
@@ -295,19 +295,13 @@ class Data(ns.BaseModel):
             "val": self.val_batch_size or self.batch_size,
             "test": self.test_batch_size or self.batch_size,
         }
-        shuffles = {"val": self.val_shuffle, "test": self.test_shuffle}
+        shuffles = {
+            "train": self.train_shuffle,
+            "val": self.val_shuffle,
+            "test": self.test_shuffle,
+        }
         for split in tqdm(["train", "val", "test"], desc="Preparing segments"):
             split_dataset = dataset.select(dataset.triggers.split == split)
-            if shuffles.get(split):
-                order = np.random.default_rng(self.seed).permutation(len(split_dataset))
-                split_dataset = split_dataset.select(order)
-            elif split != "train":
-                # Explicit order, so stateful models see each recording forward in time.
-                segments = split_dataset.segments
-                order = np.lexsort(
-                    ([s.start for s in segments], [s.timeline for s in segments])
-                )
-                split_dataset = split_dataset.select(order)
             LOGGER.info(f"# {split} segments: {len(split_dataset)} \n")
 
             sampler = None
@@ -319,7 +313,7 @@ class Data(ns.BaseModel):
                 split_dataset,
                 collate_fn=split_dataset.collate_fn,
                 batch_size=batch_sizes[split],
-                shuffle=split == "train" and sampler is None,
+                shuffle=shuffles[split] and sampler is None,
                 sampler=sampler,
                 num_workers=self.num_workers,
                 drop_last=self.drop_last and split == "train",

@@ -457,7 +457,7 @@ def test_add_sleep_onset_targets_max_pre_n2_s_no_op_when_larger_than_recording(
 
 
 def test_add_sleep_onset_targets_random_start(sleep_onset_events):
-    transform = AddSleepOnsetTargets(random_start_splits=("test",), min_duration_s=5.0)
+    transform = AddSleepOnsetTargets(random_start_splits=("test",), min_pre_n2_s=5.0)
     with pytest.raises(ValueError, match="after the split step"):
         transform(sleep_onset_events)
     events = pd.concat(
