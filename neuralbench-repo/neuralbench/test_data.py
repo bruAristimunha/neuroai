@@ -67,6 +67,19 @@ def test_sequential_evaluation_rejects_onset_aligned_crop(build_data, mode):
     )
     with pytest.raises(ValueError, match="leaks the sleep target"):
         Data(**config)
+    config["study"]["targets"]["random_start_splits"] = ["val", "test"]
+    Data(**config)
+
+
+def test_shuffle_eval_permutes_val_and_test(build_data):
+    ordered = build_data(seed=33).prepare()
+    shuffled = build_data(seed=33, shuffle_eval=True).prepare()
+    for split in ("val", "test"):
+        before = [(s.timeline, s.start) for s in ordered[split].dataset.segments]
+        after = [(s.timeline, s.start) for s in shuffled[split].dataset.segments]
+        assert after != before and sorted(after) == sorted(before)
+    with pytest.raises(ValueError, match="shuffle_eval conflicts"):
+        build_data(seed=33, shuffle_eval=True, sequential_eval=True)
 
 
 def _train_indices(loaders: dict[str, DataLoader]) -> list[int]:

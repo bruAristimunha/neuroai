@@ -161,6 +161,9 @@ class Data(ns.BaseModel):
     sampler: BaseSampler | None = None
     batch_size: int = 64
     sequential_eval: bool | tp.Literal["test"] = False
+    # Mix recordings across the batches of non-sequential evaluation splits, so a
+    # model cannot pool the windows of one recording (e.g. rank them by time).
+    shuffle_eval: bool = False
     num_workers: int = 0
     drop_last: bool = False
     pin_memory: bool = True
@@ -174,6 +177,12 @@ class Data(ns.BaseModel):
 
     def model_post_init(self, __context):
         super().model_post_init(__context)
+        if self.sequential_eval is True and self.shuffle_eval:
+            raise ValueError(
+                "shuffle_eval conflicts with sequential_eval=True, which keeps both "
+                "evaluation splits in time order; use sequential_eval='test' to "
+                "shuffle validation only."
+            )
         self._subject_id = ns.extractors.LabelEncoder(
             event_types=self.neuro.event_types,
             event_field="subject",
@@ -185,12 +194,18 @@ class Data(ns.BaseModel):
         if self.sequential_eval:
             from .transforms import AddSleepOnsetTargets
 
+            sequential = {"val", "test"} if self.sequential_eval is True else {"test"}
             crops = find_models(self.study, AddSleepOnsetTargets, include_private=False)
-            if any(crop.max_pre_n2_s is not None for crop in crops.values()):
+            if any(
+                crop.max_pre_n2_s is not None
+                and not sequential <= set(crop.random_start_splits)
+                for crop in crops.values()
+            ):
                 raise ValueError(
                     "Sequential evaluation with max_pre_n2_s leaks the sleep target "
-                    "through window position. Use an onset-independent stream start; "
-                    "removing this crop alone does not certify the source data as causal."
+                    "through window position. Use an onset-independent stream start, "
+                    f"e.g. random_start_splits={sorted(sequential)}; removing this crop "
+                    "alone does not certify the source data as causal."
                 )
         return self
 
@@ -314,6 +329,9 @@ class Data(ns.BaseModel):
                         ),
                     )
                 )
+            elif self.shuffle_eval and split != "train":
+                order = np.random.default_rng(self.seed).permutation(len(split_dataset))
+                split_dataset = split_dataset.select(order)
             LOGGER.info(f"# {split} segments: {len(split_dataset)} \n")
 
             sampler = None
