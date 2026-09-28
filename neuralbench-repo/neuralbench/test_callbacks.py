@@ -76,11 +76,18 @@ def test_reset_per_timeline_in_lightning():
     for stage, run in [("test", trainer.test), ("val", trainer.validate)] * 2:
         result = run(module, loader, verbose=False)[0]
         assert result[f"{stage}/mae"] == pytest.approx((1 + 3 + 2 * 4 + 8 + 24) / 6)
-    assert observed == [1.0, 3.0, 4.0, 8.0, 24.0] * 4
+    per_timeline = [1.0, 3.0, 4.0, 8.0, 24.0]
+    assert observed == per_timeline * 4
     assert module.model is model and backbone.total == 100, "original model changed"
-    callback.on_train_batch_start(None, module, None, 0)
-    assert backbone.total == 0
-    callback.on_train_batch_start(None, SimpleNamespace(model=nn.Identity()), None, 0)
+    observed.clear()
+    for batch_idx, i in enumerate([0, 1, 1, 2, 3, 4]):
+        if batch_idx == 2:
+            trainer.validate(module, loader, verbose=False)
+        callback.on_train_batch_start(None, module, batches[i], batch_idx)
+        module.model_forward(batches[i])
+    assert observed == [1.0, 3.0] + per_timeline + [5.0, 4.0, 8.0, 24.0]
+    stateless = SimpleNamespace(model=nn.Identity())
+    callback.on_train_batch_start(None, stateless, batches[0], 0)
 
 
 class MockSegment:

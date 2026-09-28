@@ -111,9 +111,9 @@ works and how to customize it by subclassing ``BrainModule``.
 # calls the copy's optional ``reset_state()``, so stateful models know where
 # timelines begin and nothing the model changes while predicting (weights,
 # buffers, attributes) carries over to the next timeline. The original model is
-# restored when evaluation ends. ``reset_state()`` also runs before every
-# training batch, because shuffled training windows are independent. The
-# wrapper forwards the hook to its backbone.
+# restored when evaluation ends. ``reset_state()`` also runs at each new
+# timeline during training, which with shuffled batches is almost every batch.
+# The wrapper forwards the hook to its backbone.
 #
 # %%
 # Subclassing BrainModule
