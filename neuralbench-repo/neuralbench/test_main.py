@@ -5,7 +5,6 @@
 # LICENSE file in the root directory of this source tree.
 
 import typing as tp
-import warnings
 from math import log
 from types import SimpleNamespace
 
@@ -110,14 +109,40 @@ def test_sequential_evaluation_accepts_stateless_models(wrapped):
     if wrapped:
         model = DownstreamWrapperModel(model, torch.Size([1]), None, 1, aggregation=None)
     batch = SimpleNamespace(segments=[SimpleNamespace(timeline="recording")])
+    module = SimpleNamespace(model=model)
     callback = SequentialEvaluation()
-    with pytest.warns(UserWarning, match="without reset_state"):
-        callback.setup(None, SimpleNamespace(model=model), "test")
-    callback.on_test_batch_start(
-        SimpleNamespace(world_size=1), SimpleNamespace(model=model), batch, 0
-    )
+    callback.on_test_start(None, module)
+    callback.on_test_batch_start(SimpleNamespace(world_size=1), module, batch, 0)
     x = torch.ones(1, 1)
-    torch.testing.assert_close(model(x), x)
+    torch.testing.assert_close(module.model(x), x)
+
+
+def test_sequential_evaluation_restores_model_without_reset_state():
+    class Model(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.weight = nn.Parameter(torch.zeros(1))
+            self.memory = []
+
+        def forward(self, x):
+            self.memory.append(x)
+            with torch.no_grad():
+                self.weight += 1
+
+    model = Model()
+    module = SimpleNamespace(model=model)
+    trainer = SimpleNamespace(world_size=1)
+    callback = SequentialEvaluation()
+    callback.on_test_start(trainer, module)
+    for index, night in enumerate(["a", "a", "b"]):
+        batch = SimpleNamespace(segments=[SimpleNamespace(timeline=night)])
+        callback.on_test_batch_start(trainer, module, batch, index)
+        module.model(index)
+        if night == "a":
+            assert module.model.memory == list(range(index + 1))
+    assert module.model.memory == [2] and module.model.weight.item() == 1
+    callback.on_test_end(trainer, module)
+    assert module.model is model and model.weight.item() == 0 and not model.memory
 
 
 @pytest.mark.parametrize("validation", [False, True])
@@ -133,22 +158,24 @@ def test_sequential_state_does_not_cross_batches_or_phases(validation):
     trainer = SimpleNamespace(world_size=1)
     callback = SequentialEvaluation(validation=validation)
     batch = SimpleNamespace(segments=[SimpleNamespace(timeline="night")])
-    for hook, expected in (
-        (callback.on_train_batch_start, [0, 0]),
-        (callback.on_validation_batch_start, [0, 99 if validation else 0]),
-    ):
-        for index, state in enumerate(expected):
-            model.state = 99
-            hook(trainer, module, batch, index)
-            assert model.state == state
-    for hook in (callback.on_validation_end, callback.on_test_end):
+    for index in range(2):
         model.state = 99
+        callback.on_train_batch_start(trainer, module, batch, index)
+        assert model.state == 0
+    callback.on_validation_start(trainer, module)
+    for index, state in enumerate([0, 99 if validation else 0]):
+        module.model.state = 99
+        callback.on_validation_batch_start(trainer, module, batch, index)
+        assert module.model.state == state
+    for hook in (callback.on_validation_end, callback.on_test_end):
+        module.model.state = 99
         hook(trainer, module)
-        assert model.state == 0 and callback.previous is None
+        assert module.model is model and model.state == 0
+        assert callback.previous is None
 
 
 @pytest.mark.parametrize("wrapped", [False, True])
-def test_sequential_warning_respects_wrapper_reset(wrapped):
+def test_sequential_reset_reaches_wrapped_backbone(wrapped):
     class Model(nn.Module):
         def __init__(self):
             super().__init__()
@@ -166,10 +193,6 @@ def test_sequential_warning_respects_wrapper_reset(wrapped):
     )
     module = SimpleNamespace(model=model)
     callback = SequentialEvaluation()
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        callback.setup(None, module, "test")
-    assert not caught
     callback.on_train_batch_start(None, module, None, 0)
     assert backbone.state == 0
 

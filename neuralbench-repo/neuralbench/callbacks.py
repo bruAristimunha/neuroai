@@ -5,6 +5,7 @@
 # LICENSE file in the root directory of this source tree.
 
 
+import copy
 import logging
 import typing as tp
 import warnings
@@ -28,8 +29,6 @@ from tqdm import tqdm
 
 from neuraltrain.metrics.utils import agg_per_group, agg_retrieval_preds
 
-from .modules import DownstreamWrapperModel
-
 if tp.TYPE_CHECKING:
     from neuraltrain.utils import StandardScaler
 
@@ -44,9 +43,14 @@ class SequentialEvaluation(Callback):
     so later windows cannot supply context to an earlier prediction.
 
     This callback requires a single device to keep that stream on one model.
-    Before each recording, or a new evaluation pass, it calls the model's
-    optional ``reset_state()`` hook. Between those boundaries, state is left
-    intact so the model can use past windows. Stateless models need no hook.
+    When a sequential pass starts, it calls the model's optional
+    ``reset_state()`` hook and snapshots the model; each recording then runs on
+    a fresh deep copy of that snapshot, so no state crosses recordings even if
+    ``reset_state()`` is missing or incomplete. Between those boundaries, state
+    is left intact so the model can use past windows. The model is swapped back
+    at the end of the pass, so training and checkpoints never see the copies.
+    Code running in the same process can still bypass this; it guards against
+    mistakes, not adversarial submissions.
 
     ``sequential_eval="test"`` keeps validation batched. Training always uses
     independent batches: state is cleared before each batch, not carried across
@@ -60,30 +64,32 @@ class SequentialEvaluation(Callback):
     def __init__(self, validation: bool = True):
         self.validation = validation
         self.previous = None
-
-    def setup(self, trainer, pl_module, stage):
-        model = pl_module.model
-        while type(model) is DownstreamWrapperModel:
-            model = model.wrapped_model
-        if not hasattr(model, "reset_state"):
-            warnings.warn(
-                "Sequential evaluation without reset_state(): no context is reset. "
-                "Only stateless models are safe without this optional hook.",
-                UserWarning,
-            )
+        self.original: nn.Module | None = None
+        self.pristine: nn.Module | None = None
 
     @staticmethod
     def _reset(pl_module):
         if hasattr(pl_module.model, "reset_state"):
             pl_module.model.reset_state()
 
+    def on_test_start(self, trainer, pl_module):
+        self._reset(pl_module)
+        self.original = pl_module.model
+        self.pristine = copy.deepcopy(pl_module.model)
+
+    def on_validation_start(self, trainer, pl_module):
+        if self.validation:
+            self.on_test_start(trainer, pl_module)
+
     def on_test_batch_start(self, trainer, pl_module, batch, batch_idx, dataloader_idx=0):
         if len(batch.segments) != 1 or trainer.world_size != 1:
             raise ValueError("Sequential evaluation requires one window and one device")
+        if self.pristine is None:
+            raise RuntimeError("Sequential evaluation batch before the pass started")
         key = (dataloader_idx, batch.segments[0].timeline)
         # The first batch also resets state when an evaluation pass is repeated.
         if batch_idx == 0 or key != self.previous:
-            self._reset(pl_module)
+            pl_module.model = copy.deepcopy(self.pristine)
         self.previous = key
 
     def on_validation_batch_start(
@@ -98,6 +104,9 @@ class SequentialEvaluation(Callback):
         self._reset(pl_module)
 
     def on_validation_end(self, trainer, pl_module):
+        if self.original is not None:
+            pl_module.model = self.original
+        self.original = self.pristine = None
         self._reset(pl_module)
         self.previous = None
 

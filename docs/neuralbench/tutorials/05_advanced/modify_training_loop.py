@@ -102,10 +102,11 @@ works and how to customize it by subclassing ``BrainModule``.
 # batched validation and multi-GPU training available; validation then selects
 # checkpoints without cross-window context. No task enables this by default.
 #
-# ``SequentialEvaluation`` calls the model's optional ``reset_state()`` at each
-# recording boundary and evaluation restart. Stateful models must implement it;
-# stateless models may omit it (a warning is emitted). The wrapper forwards the
-# hook to its backbone. State is also cleared after evaluation and before every
+# ``SequentialEvaluation`` calls the model's optional ``reset_state()`` when an
+# evaluation pass starts, then runs each recording on a fresh deep copy of the
+# model as it was at that point, so no state crosses recordings even without
+# the hook. The wrapper forwards the hook to its backbone. The original model is
+# restored after the pass, and ``reset_state()`` also runs before every
 # training batch, because shuffled training windows are independent. This is
 # not a stateful sequence-training implementation.
 #
