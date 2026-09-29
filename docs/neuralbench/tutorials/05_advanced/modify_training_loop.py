@@ -94,6 +94,28 @@ works and how to customize it by subclassing ``BrainModule``.
 #        return loss
 
 # %%
+# Sequential evaluation
+# ---------------------
+#
+# To feed each timeline (recording) to a model one window at a time, in time
+# order, set ``data.val_batch_size=1`` and/or ``data.test_batch_size=1``.
+# Validation and test windows are ordered by timeline then time unless
+# ``data.val_shuffle``/``data.test_shuffle`` is set. Keeping validation batched
+# (only ``test_batch_size=1``) keeps epochs fast and multi-GPU training
+# available. No task does this by default.
+#
+# ``reset_per_timeline=true`` adds a PyTorch Lightning
+# `callback <https://lightning.ai/docs/pytorch/stable/extensions/callbacks.html>`_
+# that acts whenever a new timeline starts during evaluation. It runs the
+# timeline on a fresh copy of the model as it was when evaluation began, and
+# calls the copy's optional ``reset_state()``, so stateful models know where
+# timelines begin and nothing the model changes while predicting (weights,
+# buffers, attributes) carries over to the next timeline. The original model is
+# restored when evaluation ends. ``reset_state()`` also runs at each new
+# timeline during training, which with shuffled batches is almost every batch.
+# The wrapper forwards the hook to its backbone.
+#
+# %%
 # Subclassing BrainModule
 # -----------------------
 #
