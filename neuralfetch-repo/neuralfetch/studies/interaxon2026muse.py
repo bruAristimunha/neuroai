@@ -10,6 +10,7 @@ import typing as tp
 from functools import cached_property
 from pathlib import Path
 
+import mne
 import pandas as pd
 from mne_bids import BIDSPath, read_raw_bids
 
@@ -35,7 +36,7 @@ class Interaxon2026Muse(study.Study):
       lights out. The scoring method is undocumented.
     - Every recording ends 300 seconds after N2. Total length, annotations,
       future EEG and whole-recording quality summaries must stay outside
-      model inputs. Sequential batches alone do not make preprocessing causal.
+      model inputs. Streamed evaluation does not make preprocessing causal.
     - MNE-BIDS applies header unit scaling. This loader does not filter,
       resample, clean artifacts or exclude recordings using quality flags.
     - Exact Muse S generation, firmware, reference and prior filters are
@@ -51,10 +52,7 @@ class Interaxon2026Muse(study.Study):
       under the study directory is also supported.
     """
 
-    NEMAR_DATASET_ID: tp.ClassVar[str] = "nm000287"
-    licence: tp.ClassVar[str] = "CC-BY-NC-SA-4.0"
-    url: tp.ClassVar[str] = "https://doi.org/10.82901/nemar.nm000287"
-    aliases: tp.ClassVar[tuple[str, ...]] = ("muse", NEMAR_DATASET_ID)
+    aliases: tp.ClassVar[tuple[str, ...]] = ("muse", "nm000287")
     bibtex: tp.ClassVar[str] = """
     @misc{muse2026sleeponset,
         author = {{Muse Team}},
@@ -66,6 +64,8 @@ class Interaxon2026Muse(study.Study):
         url = {https://doi.org/10.82901/nemar.nm000287},
     }
     """
+    url: tp.ClassVar[str] = "https://doi.org/10.82901/nemar.nm000287"
+    licence: tp.ClassVar[str] = "CC-BY-NC-SA-4.0"
     description: tp.ClassVar[str] = (
         "Muse Team: 540 at-home recordings from 203 participants; Muse S family "
         "EEG, four channels at 128 Hz, with first-N2 point annotations. "
@@ -79,6 +79,8 @@ class Interaxon2026Muse(study.Study):
         data_shape=(4, 122880),
         frequency=128,
     )
+
+    NEMAR_DATASET_ID: tp.ClassVar[str] = "nm000287"
 
     def _download(self, overwrite: bool = False) -> None:
         download.Nemar(
@@ -114,12 +116,12 @@ class Interaxon2026Muse(study.Study):
             sessions[path.parent.name] = table
         return sessions
 
-    def iter_timelines(self):
+    def iter_timelines(self) -> tp.Iterator[dict[str, tp.Any]]:
         for subject, sessions in self._sessions.items():
             for session in sessions.index:
                 yield dict(subject=subject, session=session)
 
-    def _bids_path(self, timeline):
+    def _bids_path(self, timeline: dict[str, tp.Any]) -> BIDSPath:
         return BIDSPath(
             root=self.bids_root,
             subject=timeline["subject"].removeprefix("sub-"),
@@ -130,10 +132,10 @@ class Interaxon2026Muse(study.Study):
             extension=".vhdr",
         )
 
-    def _load_raw(self, timeline):
+    def _load_raw(self, timeline: dict[str, tp.Any]) -> mne.io.Raw:
         return read_raw_bids(self._bids_path(timeline), verbose="ERROR")
 
-    def _load_timeline_events(self, timeline):
+    def _load_timeline_events(self, timeline: dict[str, tp.Any]) -> pd.DataFrame:
         raw = self._load_raw(timeline)
         onset = raw.annotations.onset[raw.annotations.description == "n2_onset"].item()
         duration = raw.n_times / raw.info["sfreq"]
@@ -153,7 +155,7 @@ class Interaxon2026Muse(study.Study):
                 dict(
                     type="SleepStage",
                     start=onset,
-                    duration=0.0,
+                    duration=1e-3,  # point annotation
                     stage="N2",
                 ),
             ]

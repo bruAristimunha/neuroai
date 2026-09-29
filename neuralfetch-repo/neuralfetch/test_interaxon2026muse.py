@@ -66,7 +66,7 @@ def test_muse_bids_loader(tmp_path, nested, case):
     events = study._load_timeline_events(timeline)
     assert events["split"].tolist() == ["test", "test"]
     assert events["start"].tolist() == [0.0, 1.0]
-    assert events["duration"].tolist() == [2.0, 0.0]
+    assert events["duration"].tolist() == [2.0, 1e-3]
     assert events.iloc[1]["stage"] == "N2"
     loaded = SpecialLoader.from_json(events.iloc[0]["filepath"]).load()
     assert loaded.ch_names == raw.ch_names
