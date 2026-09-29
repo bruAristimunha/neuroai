@@ -5,6 +5,7 @@
 # LICENSE file in the root directory of this source tree.
 
 
+import copy
 import logging
 import typing as tp
 import warnings
@@ -28,80 +29,76 @@ from tqdm import tqdm
 
 from neuraltrain.metrics.utils import agg_per_group, agg_retrieval_preds
 
-from .modules import DownstreamWrapperModel
-
 if tp.TYPE_CHECKING:
     from neuraltrain.utils import StandardScaler
 
 LOGGER = logging.getLogger(__name__)
 
 
-class SequentialEvaluation(Callback):
-    """Let stateful models accumulate context within, but not across, recordings.
+class ResetPerTimeline(Callback):
+    """Reset the model's state at each new timeline, on a fresh model copy in evaluation.
 
-    With ``data.sequential_eval=True``, the dataloader groups windows by
-    recording and orders them by start time. It delivers one window per batch
-    so later windows cannot supply context to an earlier prediction.
+    A timeline starts at each batch whose set of timelines differs from the
+    previous batch's, or that opens an epoch or evaluation pass. With windows in
+    timeline then time order and one window per batch (batch size 1, no
+    shuffling), this is exactly each new timeline, seen forward in time. With
+    larger or shuffled batches it fires more often, never less: shuffled
+    training batches almost always start a new timeline.
 
-    This callback requires a single device to keep that stream on one model.
-    Before each recording, or a new evaluation pass, it calls the model's
-    optional ``reset_state()`` hook. Between those boundaries, state is left
-    intact so the model can use past windows. Stateless models need no hook.
-
-    ``sequential_eval="test"`` keeps validation batched. Training always uses
-    independent batches: state is cleared before each batch, not carried across
-    shuffled windows. Models must handle the examples within a batch independently.
-    For batched, stateless context, use longer input windows with targets restricted
-    to their scored tail (e.g. ``CroppedExtractor``); that does not itself enforce
-    causal inputs. Preprocessing and within-window causality remain the caller's
-    responsibility. N2-aligned crops can reveal sleep targets by window counting.
+    At each new timeline, the model's optional ``reset_state()`` is called.
+    During validation and test, it is called on a fresh copy of the model as it
+    was when evaluation began, so nothing the model changes while predicting
+    (weights, buffers, attributes) carries over to the next timeline. The
+    original model is restored when evaluation ends, so training and
+    checkpoints never see the copies. A model that carries state across
+    training batches must detach it from the autograd graph.
     """
 
-    def __init__(self, validation: bool = True):
-        self.validation = validation
-        self.previous = None
-
-    def setup(self, trainer, pl_module, stage):
-        model = pl_module.model
-        while type(model) is DownstreamWrapperModel:
-            model = model.wrapped_model
-        if not hasattr(model, "reset_state"):
-            warnings.warn(
-                "Sequential evaluation without reset_state(): no context is reset. "
-                "Only stateless models are safe without this optional hook.",
-                UserWarning,
-            )
+    def __init__(self) -> None:
+        self.original: nn.Module | None = None
+        # stage ("train" or "eval") -> (dataloader_idx, timelines) of its last batch
+        self.previous: dict[str, tuple[int, frozenset[str]]] = {}
 
     @staticmethod
-    def _reset(pl_module):
-        if hasattr(pl_module.model, "reset_state"):
-            pl_module.model.reset_state()
+    def _reset_state(model: nn.Module) -> None:
+        reset_state = getattr(model, "reset_state", None)
+        if reset_state is not None:
+            reset_state()
+
+    def _is_new_timeline(
+        self, stage: str, batch, batch_idx: int, dataloader_idx: int
+    ) -> bool:
+        key = (dataloader_idx, frozenset(s.timeline for s in batch.segments))
+        is_new = batch_idx == 0 or key != self.previous.get(stage)
+        self.previous[stage] = key
+        return is_new
+
+    def on_train_batch_start(self, trainer, pl_module, batch, batch_idx):
+        if self._is_new_timeline("train", batch, batch_idx, 0):
+            self._reset_state(pl_module.model)
+
+    def on_test_start(self, trainer, pl_module):
+        self.original = pl_module.model
+
+    def on_validation_start(self, trainer, pl_module):
+        self.on_test_start(trainer, pl_module)
 
     def on_test_batch_start(self, trainer, pl_module, batch, batch_idx, dataloader_idx=0):
-        if len(batch.segments) != 1 or trainer.world_size != 1:
-            raise ValueError("Sequential evaluation requires one window and one device")
-        key = (dataloader_idx, batch.segments[0].timeline)
-        # The first batch also resets state when an evaluation pass is repeated.
-        if batch_idx == 0 or key != self.previous:
-            self._reset(pl_module)
-        self.previous = key
+        if self._is_new_timeline("eval", batch, batch_idx, dataloader_idx):
+            pl_module.model = copy.deepcopy(self.original)
+            self._reset_state(pl_module.model)
 
     def on_validation_batch_start(
         self, trainer, pl_module, batch, batch_idx, dataloader_idx=0
     ):
-        if self.validation:
-            self.on_test_batch_start(trainer, pl_module, batch, batch_idx, dataloader_idx)
-        else:
-            self._reset(pl_module)
+        self.on_test_batch_start(trainer, pl_module, batch, batch_idx, dataloader_idx)
 
-    def on_train_batch_start(self, trainer, pl_module, batch, batch_idx):
-        self._reset(pl_module)
+    def on_test_end(self, trainer, pl_module):
+        pl_module.model = self.original
+        self.original = None
 
     def on_validation_end(self, trainer, pl_module):
-        self._reset(pl_module)
-        self.previous = None
-
-    on_test_end = on_validation_end
+        self.on_test_end(trainer, pl_module)
 
 
 def _set_plot_theme() -> None:

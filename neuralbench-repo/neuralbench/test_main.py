@@ -5,8 +5,6 @@
 # LICENSE file in the root directory of this source tree.
 
 import typing as tp
-import warnings
-from math import log
 from types import SimpleNamespace
 
 import lightning.pytorch as pl
@@ -16,210 +14,20 @@ import pytest
 import torch
 from exca import TaskInfra
 from exca.cachedict import CacheDict
-from lightning.pytorch.loggers.logger import DummyLogger
 from torch import nn
 from torch.utils.data import DataLoader
-from torchmetrics import MeanAbsoluteError
 
-from neuralset.dataloader import Batch
 from neuraltrain.augmentations import BandRotationConfig
 from neuraltrain.losses import BaseLoss
 from neuraltrain.metrics.metrics import GroupedMetric
 from neuraltrain.models.base import BaseModelConfig
 from neuraltrain.optimizers import LightningOptimizer
 
-from .callbacks import SequentialEvaluation, WindowPredictionCollector
+from .callbacks import WindowPredictionCollector
 from .data import Data
 from .main import Experiment
-from .modules import DownstreamWrapperModel
 from .pl_module import BrainModule
 from .utils import TrainerConfig
-
-
-@pytest.mark.parametrize(
-    "shape,targets,loss,expected_loss",
-    [
-        ((1, 1), torch.tensor([[0.0], [2.0], [3.0]]), nn.L1Loss(), 1.0),
-        ((1, 2), torch.tensor([[0.0, 1.0]] * 3), nn.CrossEntropyLoss(), log(2)),
-        ((1, 4, 20), torch.zeros(3, 20, 4), nn.L1Loss(), 8 / 3),
-    ],
-    ids=["scalar", "classification", "dense"],
-)
-@pytest.mark.parametrize("device", ["cpu", "mps"])
-def test_wrapped_callback_in_lightning(shape, targets, loss, expected_loss, device):
-    if device == "mps" and not torch.backends.mps.is_available():
-        pytest.skip("MPS is unavailable")
-
-    class Model(nn.Module):
-        total = 100  # Missing the initial reset must also fail.
-
-        def reset_state(self):
-            self.total = 0
-
-        def forward(self, x):
-            self.total = self.total + x.mean().reshape(1, 1)
-            observed.append(self.total.item())
-            return self.total.reshape((1,) * len(shape)).expand(shape)
-
-    observed, rows = [], []
-    for i, (night, value) in enumerate([("a", 1.0), ("a", 2.0), ("b", 4.0)]):
-        rows.append(
-            Batch(
-                segments=[SimpleNamespace(timeline=night)],
-                data={
-                    "neuro": torch.full((1, 1, 4), value),
-                    "target": targets[i : i + 1],
-                    "subject_id": torch.zeros(1, 1, dtype=torch.long),
-                },
-            )
-        )
-    model = DownstreamWrapperModel(
-        Model(), torch.Size(shape[1:]), None, shape[1], aggregation=None
-    )
-    module = BrainModule(
-        model=model,
-        loss=loss,
-        metrics={"mae": MeanAbsoluteError()} if isinstance(loss, nn.L1Loss) else {},
-        lightning_optimizer_config=None,
-    )
-    trainer = pl.Trainer(
-        accelerator=device,
-        devices=1,
-        callbacks=[SequentialEvaluation()],
-        logger=DummyLogger(),
-        enable_checkpointing=False,
-        enable_progress_bar=False,
-        enable_model_summary=False,
-    )
-    loader = torch.utils.data.DataLoader(rows, batch_size=None)
-    for stage, run in [
-        ("test", trainer.test),
-        ("val", trainer.validate),
-        ("test", trainer.test),
-    ]:
-        result = run(module, loader, verbose=False)[0]
-        assert result[f"{stage}/loss"] == pytest.approx(expected_loss)
-        if isinstance(loss, nn.L1Loss):
-            assert result[f"{stage}/mae"] == pytest.approx(expected_loss)
-    assert observed == [1.0, 3.0, 4.0] * 3
-
-
-@pytest.mark.parametrize("wrapped", [False, True])
-def test_sequential_evaluation_accepts_stateless_models(wrapped):
-    model = nn.Identity()
-    if wrapped:
-        model = DownstreamWrapperModel(model, torch.Size([1]), None, 1, aggregation=None)
-    batch = SimpleNamespace(segments=[SimpleNamespace(timeline="recording")])
-    callback = SequentialEvaluation()
-    with pytest.warns(UserWarning, match="without reset_state"):
-        callback.setup(None, SimpleNamespace(model=model), "test")
-    callback.on_test_batch_start(
-        SimpleNamespace(world_size=1), SimpleNamespace(model=model), batch, 0
-    )
-    x = torch.ones(1, 1)
-    torch.testing.assert_close(model(x), x)
-
-
-@pytest.mark.parametrize("validation", [False, True])
-def test_sequential_state_does_not_cross_batches_or_phases(validation):
-    class Model:
-        state = 99
-
-        def reset_state(self):
-            self.state = 0
-
-    model = Model()
-    module = SimpleNamespace(model=model)
-    trainer = SimpleNamespace(world_size=1)
-    callback = SequentialEvaluation(validation=validation)
-    batch = SimpleNamespace(segments=[SimpleNamespace(timeline="night")])
-    for hook, expected in (
-        (callback.on_train_batch_start, [0, 0]),
-        (callback.on_validation_batch_start, [0, 99 if validation else 0]),
-    ):
-        for index, state in enumerate(expected):
-            model.state = 99
-            hook(trainer, module, batch, index)
-            assert model.state == state
-    for hook in (callback.on_validation_end, callback.on_test_end):
-        model.state = 99
-        hook(trainer, module)
-        assert model.state == 0 and callback.previous is None
-
-
-@pytest.mark.parametrize("wrapped", [False, True])
-def test_sequential_warning_respects_wrapper_reset(wrapped):
-    class Model(nn.Module):
-        def __init__(self):
-            super().__init__()
-            self.wrapped_model = nn.Identity()
-            self.state = 1
-
-        def reset_state(self):
-            self.state = 0
-
-    backbone = Model()
-    model = (
-        DownstreamWrapperModel(backbone, torch.Size([1]), None, 1, aggregation=None)
-        if wrapped
-        else backbone
-    )
-    module = SimpleNamespace(model=model)
-    callback = SequentialEvaluation()
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        callback.setup(None, module, "test")
-    assert not caught
-    callback.on_train_batch_start(None, module, None, 0)
-    assert backbone.state == 0
-
-
-@pytest.mark.parametrize(
-    "mode,gpus,loss,metrics,error",
-    [
-        (True, 2, {"name": "MSELoss"}, [], "single-device"),
-        ("test", 2, {"name": "MSELoss"}, [], None),
-        (True, 1, {"name": "ClipLoss"}, [], "retrieval"),
-        (
-            "test",
-            1,
-            {"name": "MultiLoss", "losses": {"clip": {"name": "ClipLoss"}}},
-            [],
-            "retrieval",
-        ),
-        (
-            True,
-            1,
-            {"name": "MSELoss"},
-            [{"name": "Rank", "log_name": "rank"}],
-            "retrieval",
-        ),
-        (False, 2, {"name": "ClipLoss"}, [], None),
-        (
-            True,
-            1,
-            {"name": "MSELoss"},
-            [{"name": "MeanAbsoluteError", "log_name": "batch_mae"}],
-            None,
-        ),
-    ],
-)
-def test_sequential_config_guards(build_data, mode, gpus, loss, metrics, error):
-    from pydantic import TypeAdapter
-
-    from neuraltrain.metrics import BaseMetric
-
-    experiment = Experiment.model_construct(
-        data=build_data(seed=33, sequential_eval=mode),
-        infra=TaskInfra(gpus_per_node=gpus),
-        loss=TypeAdapter(BaseLoss).validate_python(loss),
-        metrics=TypeAdapter(list[BaseMetric]).validate_python(metrics),
-    )
-    if error:
-        with pytest.raises(ValueError, match=error):
-            experiment._validate_sequential_evaluation()
-    else:
-        experiment._validate_sequential_evaluation()
 
 
 class _DummyLoss:

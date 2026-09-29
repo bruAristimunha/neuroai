@@ -10,10 +10,14 @@ Sleep onset prediction
 .. admonition:: 🏆 EEG/EMG Foundation Challenge 2026
    :class: tip
 
-   This task backs :doc:`Track 3 -- Sleep onset
+   This page describes the NeuralBench benchmark version of the task.
+   :doc:`Track 3 -- Sleep onset
    </neuralbench/auto_examples/biosignal_challenge_2026/plot_track3_sleep_onset>`
-   of the challenge, whose page has the commands, timings, and competition
-   data notes for it.
+   of the challenge uses its streamed version, ``_sleep_onset_stream``, which
+   scores each recording one window at a time from a random start before N2
+   onset. **Participants should use** ``neuralbench eeg _sleep_onset_stream``,
+   in both phases; the Track 3 page has its commands, timings, and competition
+   data notes.
 
 Usage
 ~~~~~
@@ -76,14 +80,13 @@ the license is CC-BY-NC-SA-4.0.
 
    neuralfetch download Interaxon2026Muse --path /path/to/DATA_DIR
    neuralbench eeg sleep_onset --dataset interaxon2026muse
+   neuralbench eeg _sleep_onset_stream --dataset interaxon2026muse
 
 This variant retains the starter's subject-disjoint split, preprocessing and
 unweighted bMAE objective. NeuralFetch preserves the supplied session labels
-(500 train / 40 seen-participant test recordings), but the default benchmark
-replaces them in memory. Evaluation stays batched by default. The optional
-sequential mode rejects this recipe's N2-aligned crop because window position
-would reveal the target. Whole-recording preprocessing is not causal either.
-This recipe is not the sealed Muse evaluation or its seen/unseen weighted score.
+(500 train / 40 seen-participant test recordings), but the benchmark replaces
+them in memory. Whole-recording preprocessing is not causal. This recipe is
+not the sealed Muse evaluation or its seen/unseen weighted score.
 
 The following additional polysomnography datasets can also be used with this
 task. Both expose annotated sleep stages, so ``AddSleepOnsetTargets`` derives

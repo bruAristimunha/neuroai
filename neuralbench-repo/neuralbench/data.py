@@ -9,8 +9,7 @@ import typing as tp
 
 import numpy as np
 import torch
-from exca.utils import find_models
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, field_validator
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
@@ -52,7 +51,7 @@ class BaseSampler(ns.base.NamedModel):
     ``sampler: {name: ClassificationSampler}``.
 
     Only the training DataLoader uses the configured sampler; the val and
-    test DataLoaders always iterate the dataset in order.
+    test order is set by ``Data.val_shuffle`` and ``Data.test_shuffle``.
     """
 
     def build(
@@ -160,7 +159,13 @@ class Data(ns.BaseModel):
     # Dataloaders
     sampler: BaseSampler | None = None
     batch_size: int = 64
-    sequential_eval: bool | tp.Literal["test"] = False
+    # Validation and test batch sizes; None uses batch_size.
+    val_batch_size: int | None = None
+    test_batch_size: int | None = None
+    # Unshuffled order is by timeline then time; train_shuffle is ignored with a sampler.
+    train_shuffle: bool = True
+    val_shuffle: bool = False
+    test_shuffle: bool = False
     num_workers: int = 0
     drop_last: bool = False
     pin_memory: bool = True
@@ -179,20 +184,6 @@ class Data(ns.BaseModel):
             event_field="subject",
             return_one_hot=False,
         )
-
-    @model_validator(mode="after")
-    def _validate_sequential_crops(self) -> "Data":
-        if self.sequential_eval:
-            from .transforms import AddSleepOnsetTargets
-
-            crops = find_models(self.study, AddSleepOnsetTargets, include_private=False)
-            if any(crop.max_pre_n2_s is not None for crop in crops.values()):
-                raise ValueError(
-                    "Sequential evaluation with max_pre_n2_s leaks the sleep target "
-                    "through window position. Use an onset-independent stream start; "
-                    "removing this crop alone does not certify the source data as causal."
-                )
-        return self
 
     def prepare(self) -> dict[str, DataLoader]:
         """Load events, build extractors, segment data and return train/val/test DataLoaders.
@@ -266,9 +257,9 @@ class Data(ns.BaseModel):
             dataset = dataset.select(keep)
 
         # Derive four independent RNG streams from ``self.seed`` so that each
-        # consumer (train DataLoader shuffle + train worker base-seeds, train
-        # WeightedRandomSampler multinomial draws, val worker base-seeds,
-        # test worker base-seeds) is a pure function of its own sub-seed.
+        # consumer (per-split DataLoader shuffle + worker base-seeds for train,
+        # val and test, train WeightedRandomSampler multinomial draws) is a pure
+        # function of its own sub-seed.
         # Per-split DataLoader generators matter when ``num_workers > 0``:
         # ``DataLoader.__iter__`` consumes one int64 from ``generator`` to
         # derive each worker's base seed, so sharing one generator across
@@ -299,21 +290,18 @@ class Data(ns.BaseModel):
 
         # Create the dataloaders
         loaders = {}
+        batch_sizes = {
+            "train": self.batch_size,
+            "val": self.val_batch_size or self.batch_size,
+            "test": self.test_batch_size or self.batch_size,
+        }
+        shuffles = {
+            "train": self.train_shuffle,
+            "val": self.val_shuffle,
+            "test": self.test_shuffle,
+        }
         for split in tqdm(["train", "val", "test"], desc="Preparing segments"):
             split_dataset = dataset.select(dataset.triggers.split == split)
-            sequential = self.sequential_eval is True and split != "train"
-            sequential |= self.sequential_eval == "test" and split == "test"
-            if sequential:
-                # Safeguard ordering for custom studies/segmenters as well as built-ins.
-                split_dataset = split_dataset.select(
-                    sorted(
-                        range(len(split_dataset)),
-                        key=lambda i: (
-                            split_dataset.segments[i].timeline,
-                            split_dataset.segments[i].start,
-                        ),
-                    )
-                )
             LOGGER.info(f"# {split} segments: {len(split_dataset)} \n")
 
             sampler = None
@@ -324,9 +312,8 @@ class Data(ns.BaseModel):
             loaders[split] = DataLoader(
                 split_dataset,
                 collate_fn=split_dataset.collate_fn,
-                # No later window in the same evaluation batch; training is unchanged.
-                batch_size=1 if sequential else self.batch_size,
-                shuffle=split == "train" and sampler is None,
+                batch_size=batch_sizes[split],
+                shuffle=shuffles[split] and sampler is None,
                 sampler=sampler,
                 num_workers=self.num_workers,
                 drop_last=self.drop_last and split == "train",

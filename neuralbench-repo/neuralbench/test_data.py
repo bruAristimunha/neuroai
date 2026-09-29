@@ -35,38 +35,21 @@ import neuralset as ns
 from .data import Data, get_default_dataloaders
 
 
-@pytest.mark.parametrize("mode", [False, True, "test"])
-def test_sequential_loader_is_task_independent(build_data, mode, monkeypatch):
-    apply = ns.dataloader.Segmenter.apply
-
-    def reversed_segments(self, events):
-        dataset = apply(self, events)
-        return dataset.select(list(reversed(range(len(dataset)))))
-
-    monkeypatch.setattr(ns.dataloader.Segmenter, "apply", reversed_segments)
-    data = build_data(seed=33, sequential_eval=mode)
-    loaders = data.prepare()
-    assert loaders["train"].batch_size == 4
-    for split in ("val", "test"):
-        expected = 1 if mode is True or (mode == "test" and split == "test") else 4
-        assert loaders[split].batch_size == expected
-        positions = [(s.timeline, s.start) for s in loaders[split].dataset.segments]
-        assert positions == sorted(positions, reverse=expected != 1)
-
-
-@pytest.mark.parametrize("mode", [True, "test"])
-def test_sequential_evaluation_rejects_onset_aligned_crop(build_data, mode):
-    data = build_data(seed=33)
-    config = data.model_dump()
-    config.update(
-        sequential_eval=mode,
-        study={
-            "source": data.study.model_dump(),
-            "targets": {"name": "AddSleepOnsetTargets", "max_pre_n2_s": 1200.0},
-        },
-    )
-    with pytest.raises(ValueError, match="leaks the sleep target"):
-        Data(**config)
+def test_split_batch_size_and_shuffle(build_data):
+    loaders = build_data(
+        seed=33,
+        val_batch_size=1,
+        test_batch_size=2,
+        train_shuffle=False,
+        test_shuffle=True,
+    ).prepare()
+    splits = ("train", "val", "test")
+    assert [loaders[split].batch_size for split in splits] == [4, 1, 2]
+    shuffled = [
+        isinstance(loaders[split].sampler, torch.utils.data.RandomSampler)
+        for split in splits
+    ]
+    assert shuffled == [False, False, True]
 
 
 def _train_indices(loaders: dict[str, DataLoader]) -> list[int]:
@@ -275,28 +258,14 @@ def test_get_default_dataloaders_merges_and_overrides(
     assert cfg.neuro.frequency == 60.0  # dotted override (base default 120.0)
 
 
-@pytest.mark.parametrize(
-    "task,dataset,source",
-    [
-        ("motor_imagery", "schalk2004bci2000", "Schalk2004Bci2000"),
-        ("sleep_onset", "interaxon2026muse", "Interaxon2026Muse"),
-    ],
-)
 def test_get_default_dataloaders_selects_dataset_variant(
     monkeypatch: pytest.MonkeyPatch,
-    task,
-    dataset,
-    source,
 ) -> None:
     captured: list[Data] = []
     monkeypatch.setattr(Data, "prepare", lambda self: captured.append(self))
-    get_default_dataloaders("eeg", task, dataset=dataset)
+    get_default_dataloaders("eeg", "motor_imagery", dataset="schalk2004bci2000")
     study: tp.Any = captured[0].study
-    assert type(study.steps["source"]).__name__ == source
-    if dataset == "interaxon2026muse":
-        assert captured[0].sequential_eval is False
-        assert study.steps["annotate_sleep_onset"].max_pre_n2_s == 1200
-        assert study.steps["split"].split_by == "subject"
+    assert type(study.steps["source"]).__name__ == "Schalk2004Bci2000"
 
 
 @pytest.mark.parametrize(

@@ -166,6 +166,10 @@ re-run the top three submissions of each track.
 #      - --
 #      - 25.14 +/- 2.30
 #
+# The Sleep column is the benchmark version of the task, ``sleep_onset``.
+# Track 3 uses ``_sleep_onset_stream``, whose test windows differ, so its
+# bMAE is not comparable (see the :doc:`Track 3 page <plot_track3_sleep_onset>`).
+#
 # The pose column is in degrees, to match the published baseline, while
 # the task logs ``val/mae`` in radians: multiply by 180 / pi to compare.
 
@@ -302,10 +306,10 @@ re-run the top three submissions of each track.
 # .. code-block:: bash
 #
 #    # 1. Run the three EEG tracks (cached automatically)
-#    neuralbench eeg image motor_imagery sleep_onset -m eegnet reve
+#    neuralbench eeg image motor_imagery _sleep_onset_stream -m eegnet reve
 #
 #    # 2. Aggregate cached results -- no retraining
-#    neuralbench eeg image motor_imagery sleep_onset -m eegnet reve --plot-cached
+#    neuralbench eeg image motor_imagery _sleep_onset_stream -m eegnet reve --plot-cached
 #
 #    # 3. Track 4 lives under another device -- aggregate separately
 #    neuralbench emg pose -m vemg2pose --plot-cached
@@ -366,8 +370,8 @@ re-run the top three submissions of each track.
 #    side of the task.
 # 2. **Muse sleep-onset training set.** Public on NEMAR as ``nm000287``:
 #    540 recordings from 203 participants, four EEG channels at 128 Hz.
-#    Select ``--dataset interaxon2026muse`` for a local subject-disjoint,
-#    batched baseline. It uses unweighted ``bmae``, not the sealed Muse
+#    Select ``--dataset interaxon2026muse`` for a local subject-disjoint
+#    baseline. It uses unweighted ``bmae``, not the sealed Muse
 #    weighted score. The supplied 500/40 session split remains available
 #    through NeuralFetch. Sleep-EDF and the additional clinical PSG datasets
 #    remain proxy datasets; see Track 3 for the evaluation limitations.

@@ -97,29 +97,42 @@ works and how to customize it by subclassing ``BrainModule``.
 # Sequential evaluation
 # ---------------------
 #
-# Set ``data.sequential_eval=true`` for ordered, single-window validation and
-# testing, or ``data.sequential_eval=test`` for testing only. The latter keeps
-# batched validation and multi-GPU training available; validation then selects
-# checkpoints without cross-window context. No task enables this by default.
+# To feed each timeline (recording) to a model one window at a time, in time
+# order, set ``data.val_batch_size=1`` and/or ``data.test_batch_size=1``.
+# Validation and test windows are ordered by timeline then time unless
+# ``data.val_shuffle``/``data.test_shuffle`` is set. Keeping validation batched
+# (only ``test_batch_size=1``) keeps epochs fast and multi-GPU training
+# available. ``eeg _sleep_onset_stream`` streams its test split this way.
 #
-# ``SequentialEvaluation`` calls the model's optional ``reset_state()`` at each
-# recording boundary and evaluation restart. Stateful models must implement it;
-# stateless models may omit it (a warning is emitted). The wrapper forwards the
-# hook to its backbone. State is also cleared after evaluation and before every
-# training batch, because shuffled training windows are independent. This is
-# not a stateful sequence-training implementation.
+# ``reset_per_timeline=true`` adds a PyTorch Lightning
+# `callback <https://lightning.ai/docs/pytorch/stable/extensions/callbacks.html>`_
+# that acts whenever a new timeline starts during evaluation. It runs the
+# timeline on a fresh copy of the model as it was when evaluation began, and
+# calls the copy's optional ``reset_state()``, so stateful models know where
+# timelines begin and nothing the model changes while predicting (weights,
+# buffers, attributes) carries over to the next timeline. The original model is
+# restored when evaluation ends. ``reset_state()`` also runs at each new
+# timeline during training, which with shuffled batches is almost every batch.
+# The wrapper forwards the hook to its backbone.
 #
-# For fixed past context, longer inputs with targets restricted to their tail
-# (e.g. ``CroppedExtractor``) remain the batched alternative. Neither approach
-# guarantees causal preprocessing or forbids future samples inside an input.
-# Batch-size-dependent retrieval losses/metrics are rejected. Losses with
-# masked targets can also change their weighting when batch size changes.
+# As an illustration only (not a NeuralBench model), a recurrent backbone could
+# carry its hidden state across windows and clear it in ``reset_state()``:
 #
-# Sleep-onset crops aligned to N2 are rejected in sequential mode: a model can
-# otherwise recover the target by counting windows. Use an onset-independent
-# recording start, keep total length and annotation metadata out of model
-# inputs, and audit the source cropping and preprocessing before claiming a
-# causal benchmark. The callback does not establish a competition protocol.
+# .. code-block:: python
+#
+#    class RecurrentBackbone(nn.Module):
+#        def __init__(self, n_chans: int, n_hidden: int = 64):
+#            super().__init__()
+#            self.gru = nn.GRU(n_chans, n_hidden, batch_first=True)
+#            self.hidden: torch.Tensor | None = None
+#
+#        def reset_state(self) -> None:
+#            self.hidden = None
+#
+#        def forward(self, x: torch.Tensor) -> torch.Tensor:  # x: (B, C, T)
+#            out, hidden = self.gru(x.transpose(1, 2), self.hidden)
+#            self.hidden = hidden.detach()  # next backward() would hit a freed graph
+#            return out[:, -1]
 #
 # %%
 # Subclassing BrainModule
