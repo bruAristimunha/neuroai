@@ -7,7 +7,6 @@
 """Muse sleep-onset EEG, NEMAR nm000287."""
 
 import typing as tp
-from functools import cached_property
 from pathlib import Path
 
 import mne
@@ -88,38 +87,22 @@ class Interaxon2026Muse(study.Study):
             dset_dir=self.path,
             version="1.0.0",
         ).download(overwrite=overwrite)
-        self.__dict__.pop("_sessions", None)
 
     @property
     def bids_root(self) -> Path:
-        nested = self.path / "download" / self.NEMAR_DATASET_ID
         if any(self.path.glob("sub-*/sub-*_sessions.tsv")):
-            if any(nested.glob("sub-*/sub-*_sessions.tsv")):
-                raise ValueError(f"Ambiguous BIDS roots: {self.path} and {nested}")
             return self.path
-        return nested
+        return self.path / "download" / self.NEMAR_DATASET_ID
 
-    @cached_property
-    def _sessions(self) -> dict[str, pd.DataFrame]:
+    def iter_timelines(self) -> tp.Iterator[dict[str, tp.Any]]:
         files = sorted(self.bids_root.glob("sub-*/sub-*_sessions.tsv"))
         if not files:
             raise FileNotFoundError(
                 f"No BIDS session tables in {self.bids_root}; run study.download() first"
             )
-        sessions = {}
         for path in files:
-            table = pd.read_csv(path, sep="\t").set_index("session_id")
-            if not table.index.is_unique:
-                raise ValueError(f"Duplicate session IDs in {path}")
-            if not table["split"].isin(["train", "test"]).all():
-                raise ValueError(f"Unknown split in {path}")
-            sessions[path.parent.name] = table
-        return sessions
-
-    def iter_timelines(self) -> tp.Iterator[dict[str, tp.Any]]:
-        for subject, sessions in self._sessions.items():
-            for session in sessions.index:
-                yield dict(subject=subject, session=session)
+            for session in pd.read_csv(path, sep="\t").session_id:
+                yield dict(subject=path.parent.name, session=session)
 
     def _bids_path(self, timeline: dict[str, tp.Any]) -> BIDSPath:
         return BIDSPath(
@@ -141,7 +124,11 @@ class Interaxon2026Muse(study.Study):
         duration = raw.n_times / raw.info["sfreq"]
         if not 0 <= onset <= duration:
             raise ValueError(f"N2 onset outside recording: {timeline}")
-        split = self._sessions[timeline["subject"]].loc[timeline["session"], "split"]
+        subject = timeline["subject"]
+        sessions = pd.read_csv(
+            self.bids_root / subject / f"{subject}_sessions.tsv", sep="\t"
+        ).set_index("session_id")
+        split = sessions.loc[timeline["session"], "split"]
         return pd.DataFrame(
             [
                 dict(
