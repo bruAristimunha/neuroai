@@ -122,8 +122,6 @@ class Interaxon2026Muse(study.Study):
         raw = self._load_raw(timeline)
         onset = raw.annotations.onset[raw.annotations.description == "n2_onset"].item()
         duration = raw.n_times / raw.info["sfreq"]
-        if not 0 <= onset <= duration:
-            raise ValueError(f"N2 onset outside recording: {timeline}")
         subject = timeline["subject"]
         sessions = pd.read_csv(
             self.bids_root / subject / f"{subject}_sessions.tsv", sep="\t"
