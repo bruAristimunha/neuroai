@@ -27,8 +27,10 @@ runs:
       shell: bash
       run: |
         MONTH=$(date +%Y-%m)
+        DEPS=$(cat *-repo/pyproject.toml .github/actions/setup-python-env/action.yml | sha256sum | cut -c1-12)
         {
           echo "MONTH=$MONTH"
+          echo "VENV_CACHE_KEY=venv-v1-$MONTH-$DEPS-main"
           echo "DATA_CACHE_KEY=data-v1-$MONTH"
           echo "DATA_CACHE_PATH<<EOF"
           echo "~/.cache/huggingface"
@@ -41,7 +43,9 @@ runs:
     # ── .venv cache ──────────────────────────────────────────
     # One cache entry per month (~5-6 GB, includes ~1 GB spacy models).
     # Monthly rotation keeps dependencies reasonably fresh without
-    # per-commit cache churn. Uses explicit restore + save so the
+    # per-commit cache churn. A change to a pyproject.toml or to this action
+    # also starts a new entry, so a dependency fix rebuilds the environment
+    # instead of patching the cached one. Uses explicit restore + save so the
     # multi-GB upload runs as a visible mid-job step instead of in
     # post-job cleanup (which cancel-in-progress can kill).
     - name: Restore .venv
@@ -49,7 +53,7 @@ runs:
       uses: actions/cache/restore@v4
       with:
         path: ./.venv
-        key: venv-v1-${{ env.MONTH }}-main
+        key: ${{ env.VENV_CACHE_KEY }}
 
     - name: Create .venv (on cache miss)
       if: steps.cache-venv.outputs.cache-hit != 'true'
@@ -88,7 +92,7 @@ runs:
       uses: actions/cache/save@v4
       with:
         path: ./.venv
-        key: venv-v1-${{ env.MONTH }}-main
+        key: ${{ env.VENV_CACHE_KEY }}
 
     - name: Print installed packages
       shell: bash

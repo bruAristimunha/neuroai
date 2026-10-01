@@ -14,6 +14,13 @@ on:
   push:
     branches: [main]
   pull_request:
+  # The .venv cache is rebuilt from the latest releases each month (see
+  # setup-python-env). This run rebuilds it first, on main and with every
+  # check, so a breaking release shows up here rather than in the month's
+  # first pull request.
+  schedule:
+    - cron: '0 4 1 * *'
+  workflow_dispatch:
 
   # Architecture: 3 test/check jobs + 1 lint job. Each job's steps are gated
   # by dorny/paths-filter so unchanged packages are skipped entirely (the main
@@ -27,18 +34,20 @@ jobs:
   changes:
     name: Detect changes
     runs-on: ubuntu-latest
+    # Scheduled and manual runs skip the filter, so every check runs.
     outputs:
-      neuralset: ${{ steps.filter.outputs.neuralset }}
-      neuralfetch: ${{ steps.filter.outputs.neuralfetch }}
-      neuraltrain: ${{ steps.filter.outputs.neuraltrain }}
-      ssl_example: ${{ steps.filter.outputs.ssl_example }}
-      neuralbench: ${{ steps.filter.outputs.neuralbench }}
-      docs: ${{ steps.filter.outputs.docs }}
-      any: ${{ steps.filter.outputs.neuralset == 'true' || steps.filter.outputs.neuralfetch == 'true' || steps.filter.outputs.neuraltrain == 'true' || steps.filter.outputs.neuralbench == 'true' }}
+      neuralset: ${{ steps.filter.outcome == 'skipped' || steps.filter.outputs.neuralset }}
+      neuralfetch: ${{ steps.filter.outcome == 'skipped' || steps.filter.outputs.neuralfetch }}
+      neuraltrain: ${{ steps.filter.outcome == 'skipped' || steps.filter.outputs.neuraltrain }}
+      ssl_example: ${{ steps.filter.outcome == 'skipped' || steps.filter.outputs.ssl_example }}
+      neuralbench: ${{ steps.filter.outcome == 'skipped' || steps.filter.outputs.neuralbench }}
+      docs: ${{ steps.filter.outcome == 'skipped' || steps.filter.outputs.docs }}
+      any: ${{ steps.filter.outcome == 'skipped' || steps.filter.outputs.neuralset == 'true' || steps.filter.outputs.neuralfetch == 'true' || steps.filter.outputs.neuraltrain == 'true' || steps.filter.outputs.neuralbench == 'true' }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
         id: filter
+        if: github.event_name == 'push' || github.event_name == 'pull_request'
         with:
           base: main
           filters: |
