@@ -1120,7 +1120,7 @@ class FmriCleaner(pydantic.BaseModel):
                 standardize=self.standardize,
                 high_pass=self.high_pass,
                 low_pass=self.low_pass,
-                filter=self.filter,
+                filter=self.filter or False,  # nilearn>=0.14 rejects None
                 detrend=self.detrend,
                 ensure_finite=self.ensure_finite,
             )
