@@ -107,13 +107,14 @@ pre-commit install
 ## Optional dependencies
 
 The base install loads pretrained model weights (via `braindecode[hub]`) and
-downloads most datasets (via `neuralfetch[quickstart]`). Two dataset families
+downloads most datasets (via `neuralfetch[quickstart]`). Three dataset families
 reach their host through a client `neuralbench` does not depend on:
 
 | Package | Needed by |
 | --- | --- |
 | `moabb>=1.7.1` | every MOABB-backed EEG dataset, including the `eeg motor_imagery` default |
 | `eegdash>=0.8.2` | every EEG-Dash-served dataset, including `emg pose` |
+| `awscli` | the Natural Scenes Dataset (`Allen2022Massive*`), including `fmri image --dataset Allen2022MassiveRaw` |
 
 The error names the missing package, so installing on demand works; to have
 both up front:
