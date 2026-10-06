@@ -36,8 +36,7 @@ class Dreyer2026Proteus(study.Study):
       resample or clean artifacts.
     - No electrode coordinates are distributed; channel positions come from
       MNE's ``standard_1020`` montage.
-    - The NEMAR download is pinned to 1.0.0. An existing BIDS tree directly
-      under the study directory is also supported.
+    - The NEMAR download is pinned to 1.0.0.
     """
 
     aliases: tp.ClassVar[tuple[str, ...]] = ("proteus", "nm000290")
@@ -80,8 +79,6 @@ class Dreyer2026Proteus(study.Study):
 
     @property
     def bids_root(self) -> Path:
-        if any(self.path.glob("sub-*/ses-*/eeg/*_eeg.edf")):
-            return self.path
         return self.path / "download" / self.NEMAR_DATASET_ID
 
     def iter_timelines(self) -> tp.Iterator[dict[str, tp.Any]]:
@@ -93,7 +90,7 @@ class Dreyer2026Proteus(study.Study):
         for path in files:
             entities = get_entities_from_fname(path.name)
             yield dict(
-                subject=f"sub-{entities['subject']}",
+                subject=entities["subject"],
                 session=entities["session"],
                 task=entities["task"],
                 run=entities["run"],
@@ -102,7 +99,7 @@ class Dreyer2026Proteus(study.Study):
     def _bids_path(self, timeline: dict[str, tp.Any]) -> BIDSPath:
         return BIDSPath(
             root=self.bids_root,
-            subject=timeline["subject"].removeprefix("sub-"),
+            subject=timeline["subject"],
             session=timeline["session"],
             task=timeline["task"],
             run=timeline["run"],
