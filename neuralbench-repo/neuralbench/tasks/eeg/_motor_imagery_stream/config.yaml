@@ -10,6 +10,9 @@
 
 data:
   neuro:
+    frequency: 120.0
+    filter: [0.1, 75.0]
+    notch_filter: [50.0, 60.0]
     scaler: null
     clamp: null
     scale_factor: 1.0e+6  # V -> uV
@@ -44,6 +47,11 @@ loss:
   name: CrossEntropyLoss
   kwargs:
     label_smoothing: 0.1
-metrics: !!python/object/apply:neuralbench.defaults.metrics.get_classification_metric_configs
-  args: [*brain_model_output_size]
-  kwds: {per_stream: true}
+metrics: !!python/object/apply:operator.add
+  - !!python/object/apply:neuralbench.defaults.metrics.get_classification_metric_configs
+    - *brain_model_output_size
+  - - log_name: bal_acc_stream_mean  # balanced accuracy per stream, averaged over streams
+      name: GroupedMetric
+      metric_name: Accuracy
+      kwargs: {task: multiclass, num_classes: *brain_model_output_size, average: macro}
+      reduction: mean

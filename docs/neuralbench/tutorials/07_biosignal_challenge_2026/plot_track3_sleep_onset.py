@@ -56,14 +56,13 @@ reconstruction because a sparse wearable montage supports it poorly.
    Muse data are available as `NEMAR nm000287, version 1.0.0
    <https://doi.org/10.82901/nemar.nm000287>`__, by Muse Team under
    CC-BY-NC-SA-4.0. They are the default dataset of ``neuralbench eeg
-   _sleep_onset_stream``, which keeps the starter's subject-disjoint split
-   and selects checkpoints on the per-recording W-bMAE; it does not use the
-   supplied session split or reproduce the sealed score. Source session
-   labels remain available in NeuralFetch for experiments that need the
-   supplied split.
+   _sleep_onset_stream``, which uses the supplied session split and selects
+   checkpoints on the per-recording W-bMAE; it does not reproduce the sealed
+   score.
 
-   Every released recording ends 300 s after N2, so total recording length
-   is not a legitimate predictive input. ``_sleep_onset_stream`` feeds the
+   The release's session tables place every N2 onset exactly 300 s before
+   the recording end, so total recording length is not a legitimate
+   predictive input. ``_sleep_onset_stream`` feeds the
    signal at its native rate, unfiltered and unscaled apart from the
    conversion to microvolts, so no whole-recording statistic reaches the
    model; a model config that sets its own preprocessing, such as
@@ -147,24 +146,21 @@ reconstruction because a sparse wearable montage supports it poorly.
 # Split and model selection
 # --------------------------
 #
-# **Split.** Participant-level 60 / 20 / 20, drawn by ``SklearnSplit`` with
-# ``split_by: subject``. Every recording from a participant lands in exactly
-# one fold, so no sleeper is shared between train, validation and test --
-# the starter kit's test score therefore measures generalisation to people
-# the model has never seen. Both split seeds are fixed at 33, so the
-# partition is identical on every machine and every run. On the Muse data's
-# 203 participants that resolves to **121 train / 41 validation / 41 test**
-# (315 / 120 / 105 recordings), and on Sleep-EDF's 78 participants to
-# **46 train / 16 validation / 16 test**.
+# **Split.** The supplied session split, read by ``PredefinedSplit`` from the
+# release's ``split`` column: 500 training and 40 test recordings, all test
+# sleepers seen in training. Twenty percent of the training subjects (seed
+# 33) are held out for validation, giving **162 train / 41 validation
+# subjects** (406 / 94 recordings). The PSG variants instead split
+# participant-level 60 / 20 / 20 by ``SklearnSplit`` -- on Sleep-EDF's 78
+# participants that is **46 train / 16 validation / 16 test**.
 #
-# That 41-participant Muse test partition *is* the Codabench warm-up
-# evaluation set: the scorer runs on the same recordings this split produces
-# at random state 33. A ``_sleep_onset_stream`` ``test/wbmae_stream_mean``
-# and a warm-up leaderboard score are therefore the same measurement.
+# Those 40 Muse test recordings *are* the Codabench warm-up evaluation set.
+# A ``_sleep_onset_stream`` ``test/wbmae_stream_mean`` and a warm-up
+# leaderboard score are therefore the same measurement.
 #
 # The sealed phase is a different story. Its Muse cohort mixes seen and
-# unseen sleepers, while this split holds every sleeper out, so the sealed
-# score is not something the starter kit can approximate.
+# unseen sleepers, while the warm-up test holds no unseen sleeper, so the
+# sealed score is not something the starter kit can approximate.
 #
 # **Model selection.** The checkpoint with the lowest
 # **``val/wbmae_stream_mean``** is kept -- the warm-up score, just on the

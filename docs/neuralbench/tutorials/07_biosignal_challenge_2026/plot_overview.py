@@ -376,11 +376,10 @@ re-run the top three submissions of each track.
 #    side of the task.
 # 2. **Sealed Muse sleep-onset score.** The training set is on NEMAR as
 #    ``nm000287`` (540 recordings from 203 participants, four EEG channels
-#    at 128 Hz), and is the default dataset of ``_sleep_onset_stream``, as a
-#    local subject-disjoint baseline, also the warm-up set. It scores the
-#    warm-up's per-recording W-bMAE, not the sealed seen/unseen
-#    macro-average. The supplied 500/40 session split remains available
-#    through NeuralFetch. Sleep-EDF (``--dataset kemp2000analysis``) and the
+#    at 128 Hz), and is the default dataset of ``_sleep_onset_stream``, as
+#    the warm-up set. It uses the supplied 500/40 session split and scores
+#    the warm-up's per-recording W-bMAE, not the sealed seen/unseen
+#    macro-average. Sleep-EDF (``--dataset kemp2000analysis``) and the
 #    additional clinical PSG datasets remain proxy datasets; see Track 3 for
 #    the evaluation limitations.
 # 3. **Hidden evaluation sets.** All four tracks are scored against labels

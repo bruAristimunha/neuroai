@@ -10,7 +10,6 @@ import pytest
 import torch
 
 import neuralbench  # noqa: F401  # registers BinnedMAE config
-from neuralbench.defaults.metrics import get_sleep_onset_metric_configs
 from neuralbench.metrics import BinnedMAE
 from neuraltrain.metrics.base import BaseMetric
 
@@ -92,7 +91,16 @@ def test_binned_mae_invalid_weights(weights):
 
 
 def test_wbmae_per_stream_metric():
-    config = get_sleep_onset_metric_configs(per_stream=True)[-1]
+    config = {
+        "log_name": "wbmae_stream_mean",
+        "name": "GroupedMetric",
+        "metric_name": "BinnedMAE",
+        "kwargs": {
+            "bin_boundaries": [0.0, 40.0, 90.0, 300.0, 600.0],
+            "bin_weights": [10.0, 5.0, 3.0, 1.0],
+        },
+        "reduction": "mean",
+    }
     metric = BaseMetric.model_validate(config).build()
     preds = torch.tensor([10.0, 500.0, 0.0])
     targets = torch.tensor([5.0, 400.0, 30.0])

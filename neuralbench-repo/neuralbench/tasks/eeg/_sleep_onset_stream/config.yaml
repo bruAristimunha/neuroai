@@ -5,7 +5,7 @@
 # LICENSE file in the root directory of this source tree.
 
 # sleep_onset on interaxon2026muse, tested as streams; diff guarded by test_stream_task_diff
-# Local subject-disjoint benchmark, not the supplied session split or sealed protocol.
+# Warm-up benchmark on the supplied session split, not the sealed protocol.
 
 data:
   neuro:
@@ -19,12 +19,11 @@ data:
     source:
       name: Interaxon2026Muse
     split:
-      name: SklearnSplit
-      split_by: subject
+      name: PredefinedSplit
+      col_name: split
+      valid_split_by: subject
       valid_split_ratio: 0.2
-      test_split_ratio: 0.2
       valid_random_state: 33
-      test_random_state: 33
     annotate_sleep_onset:  # no crop or random start: Muse is curated to <= 30 min pre-N2
       name: AddSleepOnsetTargets
   # Sleep-EDF (Kemp2000) recordings only expose bipolar derivations (Fpz-Cz,
@@ -63,5 +62,12 @@ loss:
       name: MSELoss
   weights:
     mse: 0.0001  # targets are in [0, 600] s; weight=0.0001 (0.01^2) keeps MSE <= ~36 so gradient clipping does not saturate.
-metrics: !!python/object/apply:neuralbench.defaults.metrics.get_sleep_onset_metric_configs
-  kwds: {per_stream: true}
+metrics: !!python/object/apply:operator.add
+  - !!python/object/apply:neuralbench.defaults.metrics.get_sleep_onset_metric_configs []
+  - - log_name: wbmae_stream_mean  # W-bMAE per recording, averaged over recordings
+      name: GroupedMetric
+      metric_name: BinnedMAE
+      kwargs:
+        bin_boundaries: [0.0, 40.0, 90.0, 300.0, 600.0]
+        bin_weights: [10.0, 5.0, 3.0, 1.0]
+      reduction: mean

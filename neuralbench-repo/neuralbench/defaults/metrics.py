@@ -10,14 +10,7 @@ import typing as tp
 def get_classification_metric_configs(
     n_classes_or_labels: int,
     task: tp.Literal["multiclass", "multilabel"] = "multiclass",
-    per_stream: bool = False,
 ) -> list[dict[str, tp.Any]]:
-    """Metric configs for classification tasks.
-
-    With ``per_stream`` (multiclass only), also report ``bal_acc_stream_mean``:
-    the balanced accuracy of each stream (see ``Data.stream_by``), averaged
-    over streams.
-    """
     cardinality_type = "num_classes" if task == "multiclass" else "num_labels"
     metrics = [
         {
@@ -77,17 +70,6 @@ def get_classification_metric_configs(
                 },
             ]
         )
-        if per_stream:
-            bal_acc = next(m for m in metrics if m["log_name"] == "bal_acc")
-            metrics.append(
-                {
-                    "log_name": "bal_acc_stream_mean",
-                    "name": "GroupedMetric",
-                    "metric_name": bal_acc["name"],
-                    "kwargs": bal_acc["kwargs"],
-                    "reduction": "mean",
-                }
-            )
     elif task == "multilabel":
         metrics.extend(
             [
@@ -144,42 +126,23 @@ def get_regression_metric_configs(output_size: int) -> list[dict[str, tp.Any]]:
 
 def get_sleep_onset_metric_configs(
     bin_boundaries: list[float] | None = None,
-    per_stream: bool = False,
 ) -> list[dict[str, tp.Any]]:
     """Metric configs for the sleep-onset prediction task.
 
     Combines the standard regression metrics (RMSE, MAE, Pearson r, R2,
-    normalized RMSE) with a binned MAE (``bMAE``) computed inside
-    time-to-onset bins and averaged with equal weight across bins.
-
-    With ``per_stream``, also report ``wbmae_stream_mean``, the EEG 2026
-    sleep-onset score: the W-bMAE (bins weighted 10, 5, 3 and 1 from the
-    nearest to onset outwards) of each stream (see ``Data.stream_by``),
-    averaged over streams.
+    normalized RMSE) with a binned MAE (``bMAE``) -- the headline metric of
+    the EEG 2026 sleep-onset task -- computed inside time-to-onset bins and
+    averaged with equal weight across bins.
     """
     if bin_boundaries is None:
         bin_boundaries = [0.0, 40.0, 90.0, 300.0, 600.0]
-    metrics = get_regression_metric_configs(1) + [
+    return get_regression_metric_configs(1) + [
         {
             "log_name": "bmae",
             "name": "BinnedMAE",
             "bin_boundaries": bin_boundaries,
         },
     ]
-    if per_stream:
-        metrics.append(
-            {
-                "log_name": "wbmae_stream_mean",
-                "name": "GroupedMetric",
-                "metric_name": "BinnedMAE",
-                "kwargs": {
-                    "bin_boundaries": bin_boundaries,
-                    "bin_weights": [10.0, 5.0, 3.0, 1.0],
-                },
-                "reduction": "mean",
-            }
-        )
-    return metrics
 
 
 retrieval_metrics = [

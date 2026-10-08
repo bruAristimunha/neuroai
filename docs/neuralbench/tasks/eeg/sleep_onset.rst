@@ -83,12 +83,12 @@ the license is CC-BY-NC-SA-4.0.
    neuralbench eeg sleep_onset --dataset interaxon2026muse
 
 It is also the default dataset of ``_sleep_onset_stream``. This variant keeps
-whole recordings, as the release is curated to at most 30 minutes before N2,
-and retains the task's subject-disjoint split, preprocessing and unweighted
-bMAE objective. NeuralFetch preserves the supplied session labels (500 train /
-40 seen-participant test recordings), but the benchmark replaces them in
-memory. Whole-recording preprocessing is not causal. This recipe is not the
-sealed Muse evaluation or its seen/unseen weighted score.
+whole recordings and uses the supplied session split (500 train / 40
+seen-participant test recordings, with 20% of the training subjects held out
+for validation). It retains the task's preprocessing and unweighted bMAE
+objective; whole-recording preprocessing is not causal. This recipe is not the
+sealed Muse evaluation or its seen/unseen weighted score. The streamed version
+instead feeds the raw signal in microvolts and scores the per-recording W-bMAE.
 
 The following additional polysomnography datasets can also be used with this
 task. Both expose annotated sleep stages, so ``AddSleepOnsetTargets`` derives

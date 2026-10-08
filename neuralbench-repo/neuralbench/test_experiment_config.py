@@ -146,10 +146,35 @@ _STREAM_ONLY_DIFF = {
         "trainer_config.monitor": "val/bal_acc_stream_mean",
     },
 }
-# task -> stream metrics, from the number of outputs
+
+
+def _bal_acc_stream_mean(n: int) -> dict:
+    return {
+        "log_name": "bal_acc_stream_mean",
+        "name": "GroupedMetric",
+        "metric_name": "Accuracy",
+        "kwargs": {"task": "multiclass", "num_classes": n, "average": "macro"},
+        "reduction": "mean",
+    }
+
+
+_WBMAE_STREAM_MEAN = {
+    "log_name": "wbmae_stream_mean",
+    "name": "GroupedMetric",
+    "metric_name": "BinnedMAE",
+    "kwargs": {
+        "bin_boundaries": [0.0, 40.0, 90.0, 300.0, 600.0],
+        "bin_weights": [10.0, 5.0, 3.0, 1.0],
+    },
+    "reduction": "mean",
+}
+# task -> stream metrics, from the number of outputs; mirrors the
+# operator.add blocks in the stream task configs
 _STREAM_METRICS = {
-    "sleep_onset": lambda n: get_sleep_onset_metric_configs(per_stream=True),
-    "motor_imagery": lambda n: get_classification_metric_configs(n, per_stream=True),
+    "sleep_onset": lambda n: get_sleep_onset_metric_configs() + [_WBMAE_STREAM_MEAN],
+    "motor_imagery": lambda n: (
+        get_classification_metric_configs(n) + [_bal_acc_stream_mean(n)]
+    ),
 }
 # (task, stream dataset) -> extra diff; Muse is curated, so no random start
 _STREAM_DATASET_DIFF: dict[tuple[str, str | None], dict[str, list[str]]] = {
