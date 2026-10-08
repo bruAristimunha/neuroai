@@ -172,10 +172,13 @@ class Data(ns.BaseModel):
     persistent_workers: bool = True
     prefetch_factor: int | None = None
     seed: int | None = None
+    # Stream key fields, e.g. [subject, session]: see ResetPerStream, GroupedMetric
+    stream_by: list[str] | None = None
     # Others
     summary_columns: list[str] = []
 
     _subject_id: ns.extractors.LabelEncoder | None = None
+    _stream_id: ns.extractors.LabelEncoder | None = None
 
     def model_post_init(self, __context):
         super().model_post_init(__context)
@@ -184,6 +187,12 @@ class Data(ns.BaseModel):
             event_field="subject",
             return_one_hot=False,
         )
+        if self.stream_by is not None:
+            self._stream_id = ns.extractors.LabelEncoder(
+                event_types=self.neuro.event_types,
+                event_field="stream",
+                return_one_hot=False,
+            )
 
     def prepare(self) -> dict[str, DataLoader]:
         """Load events, build extractors, segment data and return train/val/test DataLoaders.
@@ -213,6 +222,10 @@ class Data(ns.BaseModel):
             "target": self.target,
             "subject_id": self._subject_id,
         }
+        if self.stream_by is not None:
+            stream = events[self.stream_by].astype(str).agg("/".join, axis=1)
+            events = events.assign(stream=stream)
+            extractors["stream_id"] = self._stream_id
 
         if isinstance(self.neuro, ns.extractors.MneRaw):
             # Prepare the neuro extractor first because the channel positions depend on it

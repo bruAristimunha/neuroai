@@ -33,13 +33,15 @@ reconstruction because a sparse wearable montage supports it poorly.
     unseen subjects, and the ranking score is the **macro-average of those
     two**, weighting night-to-night and inter-person generalisation
     equally.
-  - *Sleep-EDF proxy*: **unweighted bMAE** plus plain MAE. Publishing the
-    Muse dataset does not change this recipe or the Codabench scorer.
+  - *Warm-up phase*: **W-bMAE** on the public Muse data, computed for each
+    recording over its non-empty ranges, then averaged over recordings, with
+    no seen/unseen split.
 
-  ``neuralbench.metrics.BinnedMAE`` implements the unweighted form, so
-  ``val/bmae`` and ``test/bmae`` here match the Sleep-EDF proxy objective and
-  not the sealed one. Nothing in the start kit computes the severity
-  weights or the seen/unseen macro-average.
+  ``_sleep_onset_stream`` logs the warm-up score as
+  ``test/wbmae_stream_mean`` (``neuralbench.metrics.BinnedMAE`` with
+  ``bin_weights``, per recording); ``test/bmae`` is the unweighted bMAE over
+  all windows. Nothing in the start kit computes the seen/unseen
+  macro-average.
 - **Data**: continuous Muse wearable EEG sampled at **128 Hz**, with
   ``n2_onset`` annotations on the training cohort and a separate hidden
   evaluation cohort recorded with the same hardware and protocol. The public
@@ -55,14 +57,17 @@ reconstruction because a sparse wearable montage supports it poorly.
    <https://doi.org/10.82901/nemar.nm000287>`__, by Muse Team under
    CC-BY-NC-SA-4.0. They are the default dataset of ``neuralbench eeg
    _sleep_onset_stream``, which keeps the starter's subject-disjoint split
-   and unweighted bMAE model selection; it does not use the supplied
-   session split or reproduce the sealed score. Source session labels
-   remain available in NeuralFetch for experiments that need the supplied
-   split.
+   and selects checkpoints on the per-recording W-bMAE; it does not use the
+   supplied session split or reproduce the sealed score. Source session
+   labels remain available in NeuralFetch for experiments that need the
+   supplied split.
 
-   Every released recording ends 300 s after N2, so neither total recording
-   length nor whole-recording preprocessing statistics are legitimate
-   predictive inputs; the start kit's preprocessing is not causal.
+   Every released recording ends 300 s after N2, so total recording length
+   is not a legitimate predictive input. ``_sleep_onset_stream`` feeds the
+   signal at its native rate, unfiltered and unscaled apart from the
+   conversion to microvolts, so no whole-recording statistic reaches the
+   model; a model config that sets its own preprocessing, such as
+   ``reve``'s, overrides this.
 """
 
 # %%
@@ -90,13 +95,12 @@ reconstruction because a sparse wearable montage supports it poorly.
 # for the competition, in both phases.**
 #
 # - ``_sleep_onset_stream`` scores each recording one 5 s window at a time,
-#   forward in time, as Codabench does, and with ``--dataset
-#   kemp2000analysis`` its ``test/bmae`` is the warm-up leaderboard's
-#   measurement. Validation and test streams start at a random
-#   time before N2 onset, so the time since a stream began says little about
-#   the target, and a model's optional ``reset_state()`` is called on a fresh
-#   copy of the model at the start of each recording (see :doc:`Modifying the
-#   training loop </neuralbench/auto_examples/advanced/modify_training_loop>`).
+#   forward in time from the start of the recording, as Codabench does, and
+#   its ``test/wbmae_stream_mean`` is the warm-up leaderboard's measurement.
+#   A model's optional ``reset_state()`` is called on a fresh copy of the
+#   model at the start of each recording (``data.stream_by: [timeline]``,
+#   see :doc:`Modifying the training loop
+#   </neuralbench/auto_examples/advanced/modify_training_loop>`).
 #   Validation stays batched; set ``data.val_batch_size: 1`` to select
 #   checkpoints on streams too, at several times the training cost. The
 #   leading underscore only keeps the task out of ``neuralbench eeg all``.
@@ -109,9 +113,10 @@ reconstruction because a sparse wearable montage supports it poorly.
 #   polysomnography). Its scores are not comparable with
 #   ``_sleep_onset_stream``'s, as the test windows differ.
 #
-# Both versions share the split, target, loss and metrics.
-# ``_sleep_onset_stream`` defaults to the Muse data, and selects Sleep-EDF
-# with ``--dataset kemp2000analysis``:
+# Both versions share the split, target and loss. ``_sleep_onset_stream``
+# also feeds the signal unprocessed (see the note above), adds the
+# per-recording W-bMAE, defaults to the Muse data, and selects Sleep-EDF with
+# ``--dataset kemp2000analysis``:
 #
 # - **CLI**: ``neuralbench eeg _sleep_onset_stream``
 # - **Default dataset**: ``Interaxon2026Muse`` (NEMAR nm000287, ~1.1 GB:
@@ -124,7 +129,8 @@ reconstruction because a sparse wearable montage supports it poorly.
 #   recording, and the competition's single ``tau_hat`` is
 #   ``window_stop + prediction`` read off any window within 600 s of
 #   onset, where the cap has not saturated the target.
-# - **Headline metric key**: ``test/bmae`` (binned MAE in seconds).
+# - **Headline metric key**: ``test/wbmae_stream_mean`` (W-bMAE in seconds,
+#   per recording, averaged over recordings).
 #
 # **What the config is.** A NeuralBench task is one ``config.yaml``, and
 # nothing else: a YAML overlay on ``neuralbench/defaults/config.yaml`` naming
@@ -151,23 +157,20 @@ reconstruction because a sparse wearable montage supports it poorly.
 # (315 / 120 / 105 recordings), and on Sleep-EDF's 78 participants to
 # **46 train / 16 validation / 16 test**.
 #
-# That 16-participant Sleep-EDF test partition *is* the current Codabench
-# warm-up evaluation set: the scorer runs on the same Sleep-EDF subset this
-# split produces at random state 33. A ``_sleep_onset_stream --dataset
-# kemp2000analysis`` ``test/bmae`` and a warm-up leaderboard score are
-# therefore the same measurement.
+# That 41-participant Muse test partition *is* the Codabench warm-up
+# evaluation set: the scorer runs on the same recordings this split produces
+# at random state 33. A ``_sleep_onset_stream`` ``test/wbmae_stream_mean``
+# and a warm-up leaderboard score are therefore the same measurement.
 #
 # The sealed phase is a different story. Its Muse cohort mixes seen and
 # unseen sleepers, while this split holds every sleeper out, so the sealed
 # score is not something the starter kit can approximate.
 #
-# **Model selection.** The checkpoint with the lowest **``val/bmae``** is
-# kept -- validation binned MAE in seconds, the same quantity as the
-# warm-up ``test/bmae``, just on the validation fold. Training runs for at
-# most 40 epochs and stops early after 7 epochs without improvement; only
-# that single best checkpoint is scored on test. Note this selects on the
-# unweighted metric; compared with the sealed W-bMAE weights, a model tuned
-# this way will be under-weighting the near-onset range that matters most.
+# **Model selection.** The checkpoint with the lowest
+# **``val/wbmae_stream_mean``** is kept -- the warm-up score, just on the
+# validation fold. Training runs for at most 40 epochs and stops early after
+# 7 epochs without improvement; only that single best checkpoint is scored on
+# test.
 #
 # **How to change it**, in increasing order of effort:
 #
@@ -199,10 +202,9 @@ reconstruction because a sparse wearable montage supports it poorly.
 #    #    machine, and safe to interrupt and re-run.
 #    neuralbench eeg _sleep_onset_stream --download
 #
-#    # 2. Preprocess into CACHE_DIR -- resample, filter, scale, and cut the
-#    #    540 recordings into 5 s windows once, so every later run reads the
-#    #    cache instead. No GPU needed, and it fans out over SLURM when one is
-#    #    configured.
+#    # 2. Prepare CACHE_DIR -- read the 540 recordings and cut them into 5 s
+#    #    windows once, so every later run reads the cache instead. No GPU
+#    #    needed, and it fans out over SLURM when one is configured.
 #    neuralbench eeg _sleep_onset_stream --prepare
 #
 #    # 3. Sanity check before you queue anything: 2 epochs, a data subset, one
@@ -224,16 +226,16 @@ reconstruction because a sparse wearable montage supports it poorly.
 #    # 6. Full baseline -- foundation model (REVE), fine-tuned end to end.
 #    #    ~69M parameters against EEGNet's ~1.5k, all of them trainable here,
 #    #    so this one wants a datacentre GPU rather than a laptop; it also
-#    #    preprocesses at 200 Hz against the 120 Hz default, warming a second
-#    #    cache.
+#    #    applies its own preprocessing (200 Hz, filtered, scaled) instead of
+#    #    the task's raw signal, warming a second cache.
 #    neuralbench eeg _sleep_onset_stream -m reve
 #
 # :ref:`pretrained-weights` covers the hub cache, and no run has a CPU
 # fallback -- ``--debug`` included.
 #
 # Steps 5 and 6 cache the test-metric dictionary under ``SAVE_DIR`` --
-# ``test/bmae`` is the headline number -- and re-running the same command with
-# ``--plot-cached`` turns those cached metrics into comparison plots and CSV
+# ``test/wbmae_stream_mean`` is the headline number -- and re-running the
+# same command with ``--plot-cached`` turns those cached metrics into comparison plots and CSV
 # tables without retraining. On SLURM they return as soon as the grid is
 # queued, so the numbers appear in the job logs rather than your terminal; see
 # :ref:`reading-results`.
@@ -265,7 +267,7 @@ reconstruction because a sparse wearable montage supports it poorly.
 # The competition's own shift is cross-user on a single device. The default
 # Muse data come from that device, home protocol and target, so on them only
 # the split (every sleeper held out, see `Split and model selection`_) and
-# the unweighted metric differ from what you will be scored on. Prior
+# the seen/unseen macro-average differ from what you will be scored on. Prior
 # filters, exact hardware generation and N2 scoring methodology are
 # undocumented. An existing copy can be placed directly at
 # ``DATA_DIR/Interaxon2026Muse``; downloaded copies live under
@@ -275,11 +277,14 @@ reconstruction because a sparse wearable montage supports it poorly.
 #
 # The three PSG corpora registered for this task are exactly the three public
 # datasets the competition lists for Track 3, and all use the same
-# ``AddSleepOnsetTargets`` + ``bmae`` pipeline as the default:
+# ``AddSleepOnsetTargets`` pipeline and metrics as the default. Their
+# recordings run for hours before N2, so they keep only the last 20 minutes
+# before onset, and validation and test streams start at a random time within
+# them, so the time since a stream began says little about the target:
 #
 # .. code-block:: bash
 #
-#    # Sleep-EDF Expanded, the Codabench warm-up set: ~7 GB raw (about 4 min
+#    # Sleep-EDF Expanded: ~7 GB raw (about 4 min
 #    # to download on a fast link) + ~18 GB cache (~15 min to prepare over
 #    # 20 SLURM jobs), then ~6 min per EEGNet seed and ~8 min per REVE seed
 #    neuralbench eeg _sleep_onset_stream --dataset kemp2000analysis

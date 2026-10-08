@@ -22,6 +22,8 @@ import torchvision.transforms as T
 from scipy.stats import binom
 from torchmetrics.utilities.data import dim_zero_cat
 
+from neuraltrain.utils import all_subclasses
+
 
 class OnlinePearsonCorr(torchmetrics.regression.PearsonCorrCoef):
     """
@@ -687,7 +689,9 @@ class GroupedMetric(torchmetrics.Metric):
         if metric_name in TORCHMETRICS_NAMES:
             self.base_metric_cls = TORCHMETRICS_NAMES[metric_name]
         else:
-            metric_cls = globals().get(metric_name)
+            # also finds metrics defined by other packages, e.g. neuralbench's BinnedMAE
+            custom = {c.__name__: c for c in all_subclasses(torchmetrics.Metric)}
+            metric_cls = custom.get(metric_name)
             if metric_cls is None:
                 raise ValueError(f"Metric {metric_name} not found")
             self.base_metric_cls = metric_cls

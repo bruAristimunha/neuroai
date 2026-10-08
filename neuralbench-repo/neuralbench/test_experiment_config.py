@@ -10,6 +10,10 @@ import pytest
 import torch
 from exca import ConfDict
 
+from neuralbench.defaults.metrics import (
+    get_classification_metric_configs,
+    get_sleep_onset_metric_configs,
+)
 from neuralbench.experiment_config import (
     _adapts_a_backbone,
     _expand_grid,
@@ -122,11 +126,37 @@ def test_adaptation_overlay_leaves_a_valid_optimizer(model_name: str, preset: st
     LightningOptimizer(**dict(config["lightning_optimizer_config"]))
 
 
+_UNSCALED = {
+    "data.neuro.scaler": None,
+    "data.neuro.clamp": None,
+    "data.neuro.scale_factor": 1e6,
+}
 _STREAM_ONLY_DIFF = {
     "sleep_onset": {
-        "data.study.annotate_sleep_onset.random_start_splits": ["val", "test"]
+        **_UNSCALED,
+        "data.neuro.frequency": "native",
+        "data.neuro.filter": None,
+        "data.neuro.notch_filter": None,
+        "data.stream_by": ["timeline"],
+        "trainer_config.monitor": "val/wbmae_stream_mean",
     },
-    "motor_imagery": {},
+    "motor_imagery": {
+        **_UNSCALED,
+        "data.stream_by": ["subject", "session"],
+        "trainer_config.monitor": "val/bal_acc_stream_mean",
+    },
+}
+# task -> stream metrics, from the number of outputs
+_STREAM_METRICS = {
+    "sleep_onset": lambda n: get_sleep_onset_metric_configs(per_stream=True),
+    "motor_imagery": lambda n: get_classification_metric_configs(n, per_stream=True),
+}
+# (task, stream dataset) -> extra diff; Muse is curated, so no random start
+_STREAM_DATASET_DIFF: dict[tuple[str, str | None], dict[str, list[str]]] = {
+    ("sleep_onset", dataset): {
+        "data.study.annotate_sleep_onset.random_start_splits": ["val", "test"]
+    }
+    for dataset in ["kemp2000analysis", "alvarez2022haaglanden", "ghassemi2018you"]
 }
 # stream dataset -> core dataset, where they differ (None: task default)
 _STREAM_TO_CORE_DATASET: dict[str, dict[str | None, str | None]] = {
@@ -156,8 +186,10 @@ def test_stream_task_diff(task: str, dataset: str | None):
     core = merge_task_config("eeg", task, core_dataset).flat()
     stream = merge_task_config("eeg", f"_{task}_stream", dataset).flat()
     diff = {k: stream.get(k) for k in core | stream if core.get(k) != stream.get(k)}
+    metrics = _STREAM_METRICS[task](stream["brain_model_output_size"])
     assert diff == {
         **_STREAM_ONLY_DIFF[task],
+        **_STREAM_DATASET_DIFF.get((task, dataset), {}),
+        **ConfDict(metrics=metrics).flat(),
         "data.test_batch_size": 1,
-        "reset_per_timeline": True,
     }

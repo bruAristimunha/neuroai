@@ -12,7 +12,6 @@ data:
       name: Interaxon2026Muse
     annotate_sleep_onset:
       name: AddSleepOnsetTargets
-      max_pre_n2_s: 1200.0
     split:
       name: SklearnSplit
       split_by: subject

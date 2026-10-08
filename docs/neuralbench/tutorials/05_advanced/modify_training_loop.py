@@ -105,16 +105,20 @@ works and how to customize it by subclassing ``BrainModule``.
 # available. ``eeg _sleep_onset_stream`` and ``eeg _motor_imagery_stream``
 # stream their test split this way.
 #
-# ``reset_per_timeline=true`` adds a PyTorch Lightning
+# ``data.stream_by`` lists the event fields that identify a stream, e.g.
+# ``[timeline]`` for one stream per recording or ``[subject, session]`` for
+# one per session, whose timelines must then be listed contiguously. It adds a
+# PyTorch Lightning
 # `callback <https://lightning.ai/docs/pytorch/stable/extensions/callbacks.html>`_
-# that acts whenever a new timeline starts during evaluation. It runs the
-# timeline on a fresh copy of the model as it was when evaluation began, and
+# that acts whenever a new stream starts during evaluation. It runs the
+# stream on a fresh copy of the model as it was when evaluation began, and
 # calls the copy's optional ``reset_state()``, so stateful models know where
-# timelines begin and nothing the model changes while predicting (weights,
-# buffers, attributes) carries over to the next timeline. The original model is
+# streams begin and nothing the model changes while predicting (weights,
+# buffers, attributes) carries over to the next stream. The original model is
 # restored when evaluation ends. ``reset_state()`` also runs at each new
-# timeline during training, which with shuffled batches is almost every batch.
-# The wrapper forwards the hook to its backbone.
+# stream during training, which with shuffled batches is almost every batch.
+# The wrapper forwards the hook to its backbone. ``GroupedMetric`` metrics
+# then score each stream separately.
 #
 # As an illustration only (not a NeuralBench model), a recurrent backbone could
 # carry its hidden state across windows and clear it in ``reset_state()``:

@@ -8,3 +8,6 @@ data:
   study:
     source:
       name: Kemp2000Analysis
+    annotate_sleep_onset:
+      max_pre_n2_s: 1200.0
+      random_start_splits: [val, test]

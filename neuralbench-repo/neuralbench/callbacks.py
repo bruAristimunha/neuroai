@@ -35,20 +35,22 @@ if tp.TYPE_CHECKING:
 LOGGER = logging.getLogger(__name__)
 
 
-class ResetPerTimeline(Callback):
-    """Reset the model's state at each new timeline, on a fresh model copy in evaluation.
+class ResetPerStream(Callback):
+    """Reset the model's state at each new stream, on a fresh model copy in evaluation.
 
-    A timeline starts at each batch whose set of timelines differs from the
-    previous batch's, or that opens an epoch or evaluation pass. With windows in
-    timeline then time order and one window per batch (batch size 1, no
-    shuffling), this is exactly each new timeline, seen forward in time. With
-    larger or shuffled batches it fires more often, never less: shuffled
-    training batches almost always start a new timeline.
+    Streams are identified by ``batch.data["stream_id"]`` (see
+    ``Data.stream_by``). A stream starts at each batch whose set of streams
+    differs from the previous batch's, or that opens an epoch or evaluation
+    pass. With windows in timeline then time order, each stream's timelines
+    contiguous, and one window per batch (batch size 1, no shuffling), this is
+    exactly each new stream, seen forward in time. With larger or shuffled
+    batches it fires more often, never less: shuffled training batches almost
+    always start a new stream.
 
-    At each new timeline, the model's optional ``reset_state()`` is called.
+    At each new stream, the model's optional ``reset_state()`` is called.
     During validation and test, it is called on a fresh copy of the model as it
     was when evaluation began, so nothing the model changes while predicting
-    (weights, buffers, attributes) carries over to the next timeline. The
+    (weights, buffers, attributes) carries over to the next stream. The
     original model is restored when evaluation ends, so training and
     checkpoints never see the copies. A model that carries state across
     training batches must detach it from the autograd graph.
@@ -56,8 +58,8 @@ class ResetPerTimeline(Callback):
 
     def __init__(self) -> None:
         self.original: nn.Module | None = None
-        # stage ("train" or "eval") -> (dataloader_idx, timelines) of its last batch
-        self.previous: dict[str, tuple[int, frozenset[str]]] = {}
+        # stage ("train" or "eval") -> (dataloader_idx, stream ids) of its last batch
+        self.previous: dict[str, tuple[int, frozenset[int]]] = {}
 
     @staticmethod
     def _reset_state(model: nn.Module) -> None:
@@ -65,16 +67,16 @@ class ResetPerTimeline(Callback):
         if reset_state is not None:
             reset_state()
 
-    def _is_new_timeline(
+    def _is_new_stream(
         self, stage: str, batch, batch_idx: int, dataloader_idx: int
     ) -> bool:
-        key = (dataloader_idx, frozenset(s.timeline for s in batch.segments))
+        key = (dataloader_idx, frozenset(batch.data["stream_id"].flatten().tolist()))
         is_new = batch_idx == 0 or key != self.previous.get(stage)
         self.previous[stage] = key
         return is_new
 
     def on_train_batch_start(self, trainer, pl_module, batch, batch_idx):
-        if self._is_new_timeline("train", batch, batch_idx, 0):
+        if self._is_new_stream("train", batch, batch_idx, 0):
             self._reset_state(pl_module.model)
 
     def on_test_start(self, trainer, pl_module):
@@ -84,7 +86,7 @@ class ResetPerTimeline(Callback):
         self.on_test_start(trainer, pl_module)
 
     def on_test_batch_start(self, trainer, pl_module, batch, batch_idx, dataloader_idx=0):
-        if self._is_new_timeline("eval", batch, batch_idx, dataloader_idx):
+        if self._is_new_stream("eval", batch, batch_idx, dataloader_idx):
             pl_module.model = copy.deepcopy(self.original)
             self._reset_state(pl_module.model)
 

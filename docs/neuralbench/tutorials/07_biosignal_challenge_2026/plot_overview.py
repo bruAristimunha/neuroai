@@ -56,8 +56,8 @@ distribution shift:
    mental commands (motor imagery, mental calculation, word association)
    from short EEG windows, training on a user's earlier sessions and
    scoring on their later ones without recalibration. Headline metric:
-   **balanced accuracy**, averaged over subject-session-context cells
-   (higher is better).
+   **balanced accuracy**, computed for each session of each subject, then
+   averaged over sessions (higher is better).
 3. **Track 3 -- Sleep onset** (cross-night, cross-user): predict the
    seconds remaining until the first N2 epoch, from four-channel wearable
    EEG recorded at home. The evaluation cohort holds both sleepers seen
@@ -65,8 +65,8 @@ distribution shift:
    **W-bMAE in seconds** (lower is better) -- absolute error computed
    inside four time-to-onset ranges, weighted 10x / 5x / 3x / 1x from the
    nearest range outwards, then macro-averaged over seen and unseen
-   subjects. The current Sleep-EDF warm-up scores the *unweighted* bMAE
-   instead, which is what this starter kit computes.
+   subjects. The Muse warm-up scores W-bMAE per recording, averaged over
+   recordings, which is what this starter kit computes.
 4. **Track 4 -- EMG-to-Pose** (cross-user): regress 20 hand-joint angle
    trajectories from 16-channel wrist sEMG, on users and movement stages
    never seen during training. Headline metric: **mean absolute angular
@@ -377,12 +377,12 @@ re-run the top three submissions of each track.
 # 2. **Sealed Muse sleep-onset score.** The training set is on NEMAR as
 #    ``nm000287`` (540 recordings from 203 participants, four EEG channels
 #    at 128 Hz), and is the default dataset of ``_sleep_onset_stream``, as a
-#    local subject-disjoint baseline. It uses unweighted ``bmae``, not the
-#    sealed Muse weighted score. The supplied 500/40 session split remains
-#    available through NeuralFetch. Sleep-EDF (``--dataset
-#    kemp2000analysis``, the warm-up set) and the additional clinical PSG
-#    datasets remain proxy datasets; see Track 3 for the evaluation
-#    limitations.
+#    local subject-disjoint baseline, also the warm-up set. It scores the
+#    warm-up's per-recording W-bMAE, not the sealed seen/unseen
+#    macro-average. The supplied 500/40 session split remains available
+#    through NeuralFetch. Sleep-EDF (``--dataset kemp2000analysis``) and the
+#    additional clinical PSG datasets remain proxy datasets; see Track 3 for
+#    the evaluation limitations.
 # 3. **Hidden evaluation sets.** All four tracks are scored against labels
 #    that stay confidential (the Alljoined evaluation cohort, later
 #    Graz/BrainHero sessions, the Muse evaluation cohort, and the EMG2Pose

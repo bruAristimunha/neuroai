@@ -10,6 +10,7 @@ import pytest
 import torch
 
 import neuralbench  # noqa: F401  # registers BinnedMAE config
+from neuralbench.defaults.metrics import get_sleep_onset_metric_configs
 from neuralbench.metrics import BinnedMAE
 from neuraltrain.metrics.base import BaseMetric
 
@@ -29,6 +30,15 @@ from neuraltrain.metrics.base import BaseMetric
         ([10.0, 20.0, 70.0], [10.0, 20.0, 40.0], 15.0, {}),
         # Custom bin boundaries.
         ([0.5, 1.5], [0.2, 1.0], 0.4, {"bin_boundaries": [0.0, 1.0, 2.0]}),
+        # W-bMAE: per-bin MAEs 5, 10, 100, 100 weighted 10, 5, 3, 1 -> 500 / 19.
+        (
+            [10.0, 50.0, 200.0, 500.0],
+            [5.0, 60.0, 100.0, 400.0],
+            500 / 19,
+            {"bin_weights": [10.0, 5.0, 3.0, 1.0]},
+        ),
+        # W-bMAE skips empty bins: (10 * 5 + 1 * 100) / (10 + 1).
+        ([10.0, 500.0], [5.0, 400.0], 150 / 11, {"bin_weights": [10.0, 5.0, 3.0, 1.0]}),
         # No data returns NaN.
         ([], [], float("nan"), {}),
     ],
@@ -73,6 +83,21 @@ def test_binned_mae_accumulates_across_updates():
 def test_binned_mae_invalid_boundaries(boundaries, err_match):
     with pytest.raises(ValueError, match=err_match):
         BinnedMAE(bin_boundaries=boundaries)
+
+
+@pytest.mark.parametrize("weights", [[1.0, 1.0, 1.0], [1.0, 0.0, 1.0, 1.0]])
+def test_binned_mae_invalid_weights(weights):
+    with pytest.raises(ValueError, match="positive values, one per bin"):
+        BinnedMAE(bin_weights=weights)
+
+
+def test_wbmae_per_stream_metric():
+    config = get_sleep_onset_metric_configs(per_stream=True)[-1]
+    metric = BaseMetric.model_validate(config).build()
+    preds = torch.tensor([10.0, 500.0, 0.0])
+    targets = torch.tensor([5.0, 400.0, 30.0])
+    metric.update(preds, targets, torch.tensor([0, 0, 1]))
+    assert float(metric.compute()) == pytest.approx((150 / 11 + 30) / 2)
 
 
 def test_binned_mae_resolves_via_basemetric_discriminator():

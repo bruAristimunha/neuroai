@@ -9,6 +9,10 @@
 # split or the sealed protocol.
 
 data:
+  neuro:
+    scaler: null
+    clamp: null
+    scale_factor: 1.0e+6  # V -> uV
   study:
     source:
       name: Dreyer2026Proteus
@@ -31,14 +35,15 @@ data:
   duration: 4.0
   summary_columns: [code]
   test_batch_size: 1
-reset_per_timeline: true
+  stream_by: [subject, session]
 compute_class_weights: true
 brain_model_output_size: &brain_model_output_size 3
-trainer_config.monitor: val/bal_acc
+trainer_config.monitor: val/bal_acc_stream_mean
 trainer_config.mode: max
 loss:
   name: CrossEntropyLoss
   kwargs:
     label_smoothing: 0.1
 metrics: !!python/object/apply:neuralbench.defaults.metrics.get_classification_metric_configs
-  - *brain_model_output_size
+  args: [*brain_model_output_size]
+  kwds: {per_stream: true}
