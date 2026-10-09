@@ -114,13 +114,18 @@ it is out of date.
 # - **Units, on Track 4 only.** The task trains on radians, as emg2pose
 #   does; Codabench expects degrees. Convert (``x 57.29578``) in
 #   ``predict``.
-# - **Preprocessing.** The EEG tasks resample to 120 Hz and apply a
-#   0.1-75 Hz bandpass, a 50/60 Hz notch, a ``RobustScaler`` and a clamp at
-#   20 before the model sees anything; ``emg pose`` deliberately does none
-#   of it and feeds raw 2 kHz. Codabench passes windows at whatever
-#   ``meta["sfreq"]`` reports and expects model-specific preprocessing to
-#   live in ``submission.py``, so a model lifted from a run needs its
-#   config's chain reproduced there.
+# - **Preprocessing.** The EEG benchmark tasks resample to 120 Hz and apply
+#   a 0.1-75 Hz bandpass, a 50/60 Hz notch, a ``RobustScaler`` and a clamp
+#   at 20 before the model sees anything. The stream tasks of Tracks 2 and 3
+#   drop the scaler and the clamp, and Track 3's also the resampling and the
+#   filters; ``emg pose`` deliberately does none of it and feeds raw 2 kHz.
+#   Codabench passes windows at whatever ``meta["sfreq"]`` reports and
+#   expects model-specific preprocessing to live in ``submission.py``, so a
+#   model lifted from a run needs its config's chain reproduced there.
+#   Scaling done with ``OnTheFlyPreprocessor`` (see *Scaling inside the
+#   model* on the Track 2 and 3 pages) carries over as it is: it has no
+#   weights and ``neuraltrain`` is on the evaluation image, so build it with
+#   the same arguments in ``load_model`` and apply it in ``predict``.
 # - **Portability.** Write the wrapper against ``meta`` and the batches
 #   alone. A model that reads a dataset name, a file path, a subject id or
 #   a hard-coded channel count can pass warm-up and break on the sealed

@@ -79,7 +79,8 @@ recalibration allowed.
 #
 # Both versions share the split, target and loss. ``_motor_imagery_stream``
 # also feeds the signal in microvolts, without the default per-recording
-# scaler or clamping (resampling and filters stay), adds the per-session
+# scaler or clamping (resampling and filters stay; `Scaling inside the
+# model`_ shows how to scale each window instead), adds the per-session
 # balanced accuracy, defaults to the competition corpus, and ships
 # only the two other dataset variants these pages use, ``dreyer2023`` and
 # ``tangermann2012``; the other MI corpora are variants of ``motor_imagery``.
@@ -204,8 +205,9 @@ recalibration allowed.
 #    # 6. Full baseline -- foundation model (REVE), fine-tuned end to end.
 #    #    ~69M parameters against EEGNet's ~1.5k, all of them trainable here,
 #    #    so this one wants a datacentre GPU rather than a laptop; it also
-#    #    applies its own preprocessing (200 Hz, scaled) instead of the
-#    #    task's, warming a second cache.
+#    #    applies its own preprocessing (200 Hz, scaled per recording)
+#    #    instead of the task's, warming a second cache. See "Scaling inside
+#    #    the model" below to scale each window instead.
 #    neuralbench eeg _motor_imagery_stream -m reve
 #
 # Add ``--dataset dreyer2023`` to any of these commands to run on the
@@ -253,6 +255,71 @@ recalibration allowed.
 # </neuralbench/auto_examples/quickstart/03_evaluate_your_own_model>` for what
 # ``forward`` has to accept, the adaptation presets, and how to fan the runs
 # out to SLURM.
+
+# %%
+# Scaling inside the model
+# ------------------------
+#
+# ``_motor_imagery_stream`` drops two steps of the benchmark task's
+# preprocessing, the ``RobustScaler`` and the clamp at 20. Both run at
+# extraction, and the scaler is fit on each recording as a whole, so it would
+# give a streamed model statistics of the windows that come after the one it
+# decodes. To scale the input again, do it inside the model with
+# :class:`~neuraltrain.models.preprocessor.OnTheFlyPreprocessor`. It computes
+# its statistics on each window alone, and it has no weights, so the same
+# arguments rebuild it in your submission (see :doc:`How to Submit a Model
+# <plot_submission_guide>`).
+#
+# NeuralBench runs it in the downstream wrapper, as
+# ``downstream_model_wrapper.on_the_fly_preprocessor``. Here with the
+# benchmark task's values, applied to each window:
+#
+# .. code-block:: python
+#
+#    scores = evaluate_model(
+#        my_model,
+#        "eeg",
+#        "_motor_imagery_stream",
+#        name="my-fm",
+#        overrides={
+#            "downstream_model_wrapper.on_the_fly_preprocessor": {
+#                "scaler": "RobustScaler",
+#                "scale_dim": -1,  # per channel, over the window's samples
+#                "clamp": 20.0,
+#            },
+#        },
+#        debug=True,
+#    )
+#
+# - Keep ``scale_dim: -1``: without it, the statistics pool over the whole
+#   batch and mix windows.
+# - A per-window scaler removes the amplitude differences between windows. A
+#   float ``scaler`` multiplies by a fixed gain instead and keeps them.
+# - The module does not filter or resample; the task's extractor still does
+#   both.
+# - ``models/luna.yaml`` and ``models/biot.yaml`` already scale this way.
+#   ``models/reve.yaml`` scales each recording at extraction, so ``-m reve``
+#   brings whole-recording statistics back. To scale REVE's input per
+#   window instead, run it through ``evaluate_model`` as in
+#   :doc:`Evaluating your own model
+#   </neuralbench/auto_examples/quickstart/03_evaluate_your_own_model>`, and
+#   replace its ``"data.neuro.scaler": "StandardScaler"`` and
+#   ``"data.neuro.clamp": 15`` with ``None`` for both, plus an
+#   ``on_the_fly_preprocessor`` of ``{"scaler": "StandardScaler",
+#   "scale_dim": -1, "clamp": 15.0}``.
+# - For a model it builds from a config, the wrapper asks for the model
+#   without its output layer and adds a probe. Braindecode's EEGNet cannot be
+#   built that way, so the stock ``-m eegnet`` baseline takes no wrapper. In
+#   a model of your own, call the module in ``forward``:
+#
+#   .. code-block:: python
+#
+#      from neuraltrain.models.preprocessor import OnTheFlyPreprocessor
+#
+#      preprocess = OnTheFlyPreprocessor(
+#          scaler="RobustScaler", scale_dim=-1, clamp=20.0
+#      ).build()
+#      x, _ = preprocess(x)  # (batch, channels, samples), scaled per window
 
 # %%
 # Starter-kit analogs
