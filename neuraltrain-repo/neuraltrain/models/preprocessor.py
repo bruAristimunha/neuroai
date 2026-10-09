@@ -17,27 +17,12 @@ from .common import INVALID_POS_VALUE
 class OnTheFlyPreprocessor(BaseModelConfig):
     """Module to apply common preprocessing steps on-the-fly, inside an nn.Module.
 
-    Each window is processed alone, in the order of the ``neuralset`` neuro extractors:
-    bad channels, notch, band-pass, resampling, scaler, clamp. The notch, band-pass and
-    resampling act on the window's spectrum.
-
     Parameters
     ----------
     ptp_threshold :
         If provided, channels with a ptp higher are considered bad. If `update_ch_pos` is True,
         their positions will be set to `common.INVALID_POS_VALUE`, otherwise the amplitude
         of bad channels are replaced by 0.
-    sfreq :
-        Sampling rate of the input, in Hz. Required by `notch_filter`, `filter` and
-        `frequency`.
-    notch_filter :
-        Frequency or frequencies (Hz) to remove, with their harmonics up to 300 Hz, as the
-        extractors do. The spectrum within 1 Hz of each is removed.
-    filter :
-        Band-pass limits ``(l_freq, h_freq)`` in Hz; either can be None.
-    frequency :
-        Sampling rate of the output, in Hz. It changes the number of samples, so the model
-        has to accept the resampled length.
     scaler :
         Scaling strategy to apply to the input. If provided as a float, the amplitude will be
         multiplied by this value. If "RobustScaler" or "StandardScaler", the input data will be
@@ -60,10 +45,6 @@ class OnTheFlyPreprocessor(BaseModelConfig):
     """
 
     ptp_threshold: float | None = None
-    sfreq: float | None = None
-    notch_filter: float | list[float] | None = None
-    filter: tuple[float | None, float | None] | None = None
-    frequency: float | None = None
     scaler: (
         float
         | tp.Literal[
@@ -82,10 +63,6 @@ class OnTheFlyPreprocessor(BaseModelConfig):
             raise NotImplementedError(
                 "Robust scaling with multiple scale_dim is not supported."
             )
-        if self.sfreq is None and any(
-            step is not None for step in (self.notch_filter, self.filter, self.frequency)
-        ):
-            raise ValueError("notch_filter, filter and frequency need the input's sfreq.")
 
     def build(self) -> "OnTheFlyPreprocessorModel":
         return OnTheFlyPreprocessorModel(self)
@@ -98,10 +75,6 @@ class OnTheFlyPreprocessorModel(nn.Module):
         super().__init__()
 
         self.ptp_threshold = config.ptp_threshold
-        self.sfreq = config.sfreq
-        self.notch_filter = config.notch_filter
-        self.filter = config.filter
-        self.frequency = config.frequency
         self.scaler = config.scaler
         self.scale_dim = config.scale_dim
         self.scaler_quantile = config.scaler_quantile
@@ -143,11 +116,6 @@ class OnTheFlyPreprocessorModel(nn.Module):
             else:
                 x_out[mask] = 0.0
 
-        if any(
-            step is not None for step in (self.notch_filter, self.filter, self.frequency)
-        ):
-            x_out = self._filter_and_resample(x_out)
-
         if isinstance(self.scaler, float):
             x_out = x_out * self.scaler
         elif self.scaler == "RobustScaler":
@@ -183,28 +151,3 @@ class OnTheFlyPreprocessorModel(nn.Module):
             x_out = x_out.clamp(-self.clamp, self.clamp)
 
         return x_out, ch_pos_out
-
-    def _filter_and_resample(self, x: torch.Tensor) -> torch.Tensor:
-        """Notch, band-pass and resample each window through its spectrum."""
-        sfreq = self.sfreq
-        assert sfreq is not None  # checked by the config
-        n_times = x.shape[-1]
-        freqs = torch.fft.rfftfreq(n_times, d=1.0 / sfreq, device=x.device)
-        # brick-wall masks: exact on the window's frequency bins, ringing between them
-        keep = torch.ones_like(freqs, dtype=torch.bool)
-        notch = self.notch_filter if self.notch_filter is not None else []
-        for base in notch if isinstance(notch, list) else [notch]:
-            for harmonic in torch.arange(base, min(sfreq / 2, 301), base).tolist():
-                keep &= (freqs - harmonic).abs() > 1.0
-        if self.filter is not None:
-            l_freq, h_freq = self.filter
-            if l_freq is not None:
-                keep &= freqs >= l_freq
-            if h_freq is not None:
-                keep &= freqs <= h_freq
-        n_out = (
-            n_times if self.frequency is None else round(n_times * self.frequency / sfreq)
-        )
-        # irfft trims or zero-pads the spectrum: an ideal low-pass when downsampling
-        spectrum = torch.fft.rfft(x, dim=-1) * keep
-        return torch.fft.irfft(spectrum, n=n_out, dim=-1) * (n_out / n_times)

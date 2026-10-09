@@ -170,25 +170,3 @@ def test_minmax_scaler_constant_channel() -> None:
 
     assert torch.allclose(x_out[:, 0, :], torch.tensor(-1.0))
     assert not torch.any(torch.isnan(x_out))
-
-
-def test_on_the_fly_preprocessor_filters_and_resamples() -> None:
-    sfreq, n_times = 500.0, 2000  # 4 s
-    t = torch.arange(n_times) / sfreq
-    kept = torch.sin(2 * torch.pi * 10 * t)
-    line_noise = torch.sin(2 * torch.pi * 50 * t) + torch.sin(2 * torch.pi * 100 * t)
-    x = (kept + line_noise + 3.0).expand(2, 3, n_times)  # + a DC offset
-
-    preproc = OnTheFlyPreprocessor(
-        sfreq=sfreq, notch_filter=50.0, filter=(1.0, None), frequency=120.0
-    ).build()
-    out, _ = preproc(x)
-
-    t_out = torch.arange(480) / 120.0
-    expected = torch.sin(2 * torch.pi * 10 * t_out).expand(2, 3, 480)
-    torch.testing.assert_close(out, expected, atol=1e-4, rtol=0)
-    between_bins = torch.sin(2 * torch.pi * 50.1 * t)[None, None]
-    out, _ = OnTheFlyPreprocessor(sfreq=sfreq, notch_filter=50.0).build()(between_bins)
-    assert out.std() < 0.25 * between_bins.std(), "line noise between bins got through"
-    with pytest.raises(ValueError, match="sfreq"):
-        OnTheFlyPreprocessor(filter=(1.0, 40.0))

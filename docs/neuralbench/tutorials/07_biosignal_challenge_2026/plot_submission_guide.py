@@ -122,18 +122,38 @@ it is out of date.
 #   also drops the resampling and the filters.
 #   Codabench passes windows at whatever ``meta["sfreq"]`` reports and
 #   expects model-specific preprocessing to live in ``submission.py``, so a
-#   model lifted from a run needs its config's chain reproduced there.
-#   Preprocessing done with ``OnTheFlyPreprocessor`` (see *Preprocessing
-#   inside the model* on the Track 2 and 3 pages) carries over as it is: it
-#   has no weights and ``neuraltrain`` is on the evaluation image, so build
-#   it with the same arguments in ``load_model`` and apply it in
-#   ``predict``. Its ``sfreq``, ``notch_filter``, ``filter`` and
-#   ``frequency`` arguments are newer than ``neuraltrain`` 0.3.1: check that
-#   the evaluation image's ``neuraltrain`` has them before relying on them.
+#   model lifted from a run needs its config's chain reproduced there;
+#   preprocessing done :ref:`inside the model
+#   <preprocessing-inside-the-model>` ships with it.
 # - **Portability.** Write the wrapper against ``meta`` and the batches
 #   alone. A model that reads a dataset name, a file path, a subject id or
 #   a hard-coded channel count can pass warm-up and break on the sealed
 #   cohort.
+
+# %%
+# .. _preprocessing-inside-the-model:
+#
+# Preprocessing inside the model
+# ------------------------------
+#
+# Preprocessing that runs on each window inside the model uses no statistic
+# of the rest of the recording, and ships with the model in
+# ``submission.py``. You can write such a module yourself;
+# :class:`~neuraltrain.models.preprocessor.OnTheFlyPreprocessor` is one
+# ready-made option for common steps such as scaling and clamping (see its
+# API page for the options). NeuralBench applies it when passed as
+# ``downstream_model_wrapper.on_the_fly_preprocessor``, for example in the
+# ``overrides`` of ``evaluate_model``. In a model of your own, call it in
+# ``forward``:
+#
+# .. code-block:: python
+#
+#    from neuraltrain.models.preprocessor import OnTheFlyPreprocessor
+#
+#    preprocess = OnTheFlyPreprocessor(
+#        scaler="RobustScaler", scale_dim=-1, clamp=20.0  # per window and channel
+#    ).build()
+#    x, _ = preprocess(x)  # (batch, channels, samples)
 
 # %%
 # Will a starter-kit score match the leaderboard?

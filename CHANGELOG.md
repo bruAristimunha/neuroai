@@ -4,8 +4,6 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-- `neuraltrain`: `OnTheFlyPreprocessor` takes `sfreq`, `notch_filter`, `filter` and `frequency`, the extractors' notch, band-pass and resampling, applied to each window's spectrum; the notch removes the spectrum within 1 Hz of each harmonic (#303).
-- `neuralbench`: `DownstreamWrapper` sizes its probe from the preprocessed input, so an `on_the_fly_preprocessor` that resamples no longer fails at build (#303).
 - `neuralbench`: `-m eegnex` runs braindecode's EEGNeX (#303).
 - `neuralbench`: `--plot-cached` writes under `outputs/<device>/`, and `core/` and `full/` hold one folder per foundation-model adaptation strategy (`default/` without `-w`), so the core bar chart moves from `outputs/core/core_bar_chart.png` to `outputs/eeg/core/default/core_bar_chart.png`. The figures add category leaderboards and a labelled bar chart, and replace the separate non-EEG plotting module (#302).
 - docs: the NeuralBench landing page adds per-category radar plots and a customizable model scatter plot (#302).

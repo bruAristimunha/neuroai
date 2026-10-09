@@ -241,15 +241,6 @@ def test_downstream_wrapper_with_preprocessor():
     assert not torch.allclose(out, out_no_preproc), "preprocessor did not alter output"
 
 
-def test_downstream_wrapper_probe_is_sized_for_the_resampled_input():
-    dummy_batch = {"input": torch.randn(4, 18, 200)}
-    wrapped = DownstreamWrapper(
-        on_the_fly_preprocessor=OnTheFlyPreprocessor(sfreq=200.0, frequency=100.0),
-        aggregation="flatten",
-    ).build(nn.Identity(), dummy_batch, 3)
-    assert wrapped.probe.in_features == 18 * 100
-
-
 def test_downstream_wrapper_with_channel_merger():
     B, C_in, T, C_virtual = 4, 32, 200, 8
     channel_positions = torch.rand(B, C_in, 3)
