@@ -28,6 +28,7 @@ from lightning.pytorch.loggers import CSVLogger, WandbLogger
 from lightning.pytorch.loggers.logger import DummyLogger, Logger
 from pydantic import model_validator
 from torch.utils.data import DataLoader
+from torchmetrics import Metric
 from tqdm import tqdm
 
 import neuralset as ns
@@ -227,8 +228,9 @@ class Experiment(BaseExperiment):
             # Lightning validates in inference mode and resets the logged metrics
             # there, so their states become inference tensors, which the no_grad
             # validation inside fit cannot update in place (e.g. MeanSquaredError).
-            for metric in self._brain_module.metrics.values():
-                metric.reset()
+            for module in self._brain_module.modules():
+                if isinstance(module, Metric):
+                    module.reset()
 
         # Train model
         trainer.fit(
