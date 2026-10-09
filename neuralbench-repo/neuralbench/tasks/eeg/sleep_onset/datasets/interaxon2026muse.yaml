@@ -14,6 +14,7 @@ data:
       name: AddSleepOnsetTargets
     split:
       name: PredefinedSplit
+      test_split_query: null
       col_name: split
       valid_split_by: subject
       valid_split_ratio: 0.2
