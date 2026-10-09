@@ -77,9 +77,10 @@ license is CC-BY-4.0.
    neuralfetch download Dreyer2026Proteus --path /path/to/DATA_DIR
    neuralbench eeg motor_imagery --dataset dreyer2026proteus
 
-It is also the default dataset of ``_motor_imagery_stream``. This variant uses
-the task's subject-disjoint split. It is not the official cross-session split or
-the sealed evaluation.
+It is also the default dataset of ``_motor_imagery_stream``, which streams each
+session in recording order and adds the per-session balanced accuracy. This
+variant uses the task's subject-disjoint split. It is not the official
+cross-session split or the sealed evaluation.
 
 To run with an alternate dataset:
 

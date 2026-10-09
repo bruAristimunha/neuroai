@@ -16,8 +16,8 @@ recalibration allowed.
 
 - **Shift**: earlier sessions -> later sessions (Graz + BrainHero
   contexts), within the same user.
-- **Headline metric**: balanced accuracy averaged over
-  subject-session-context cells (higher is better).
+- **Headline metric**: balanced accuracy computed for each session of each
+  subject, then averaged over sessions (higher is better).
 - **Data**: 20 subjects, 6 sessions each, 47 channels (43 EEG, 2 EMG,
   2 EOG) at 500 Hz, ~80 hours in total. Sessions 1-3 of the 10
   evaluation subjects are released as labelled calibration; sessions
@@ -59,13 +59,14 @@ recalibration allowed.
 # NeuralBench has two versions of this task. **Use ``_motor_imagery_stream``
 # for the competition.**
 #
-# - ``_motor_imagery_stream`` scores each recording one window at a time,
-#   forward in time: test windows come one per batch, in time order, and a
-#   model's optional ``reset_state()`` is called on a fresh copy of the model
-#   at the start of each recording (see :doc:`Modifying the training loop
+# - ``_motor_imagery_stream`` scores each session one window at a time,
+#   forward in time: test windows come one per batch, its runs in recording
+#   order, and a model's optional ``reset_state()`` is called on a fresh copy
+#   of the model at the start of each session (``data.stream_by: [subject,
+#   session]``, see :doc:`Modifying the training loop
 #   </neuralbench/auto_examples/advanced/modify_training_loop>`). A stateful
-#   model can therefore adapt to a recording as it goes, but carries nothing
-#   over to the next one. Validation stays batched; set
+#   model can therefore adapt to a session as it goes, across its runs, but
+#   carries nothing over to the next one. Validation stays batched; set
 #   ``data.val_batch_size: 1`` to select checkpoints on streams too, at
 #   several times the training cost. The leading underscore only keeps the
 #   task out of ``neuralbench eeg all``.
@@ -74,11 +75,12 @@ recalibration allowed.
 #   numbers in the :doc:`challenge overview <plot_overview>` come from it, on
 #   its own default dataset, ``Stieger2021Continuous`` (62 subjects of
 #   4-class MI). With ``--dataset dreyer2026proteus`` it tests on the same
-#   windows as ``_motor_imagery_stream``, so a model without state scores the
-#   same on either.
+#   windows as ``_motor_imagery_stream``, but with its own preprocessing.
 #
-# Both versions share the split, target, loss and metrics.
-# ``_motor_imagery_stream`` defaults to the competition corpus, and ships
+# Both versions share the split, target and loss. ``_motor_imagery_stream``
+# also feeds the signal in microvolts, without the default per-recording
+# scaler or clamping (resampling and filters stay), adds the per-session
+# balanced accuracy, defaults to the competition corpus, and ships
 # only the two other dataset variants these pages use, ``dreyer2023`` and
 # ``tangermann2012``; the other MI corpora are variants of ``motor_imagery``.
 #
@@ -91,7 +93,8 @@ recalibration allowed.
 # - **Shift**: held-out subjects, *not* the cross-session shift of the
 #   competition. Use it to validate the training pipeline and architecture
 #   choice.
-# - **Headline metric key**: ``test/bal_acc``.
+# - **Headline metric key**: ``test/bal_acc_stream_mean`` (balanced accuracy
+#   per subject and session, averaged over sessions).
 #
 # ``--dataset dreyer2023`` selects ``Dreyer2023Large`` (87 subjects,
 # 27-channel EEG, 2-class motor imagery -- left hand / right hand, ~19 GB),
@@ -150,24 +153,22 @@ recalibration allowed.
 # fold, and the partition is identical on every machine.
 #
 # That part-B test partition is the current Codabench warm-up evaluation
-# set, so a ``test/bal_acc`` from this configuration and a warm-up
-# leaderboard score measure the same thing.
+# set, so a ``test/bal_acc_stream_mean`` from this configuration and a
+# warm-up leaderboard score are computed on the same windows.
 #
 # Either way the starter-kit shift is *cross-subject*, while the sealed
 # phase's is *cross-session within subject*. See `Adapting to the
 # competition setup`_ for what changes.
 #
-# **Model selection.** The checkpoint with the highest **``val/bal_acc``**
-# is kept -- validation balanced (macro-averaged) accuracy, the same
-# quantity as the headline ``test/bal_acc``, just on the validation fold.
-# Training runs for at most 40 epochs and stops early after 5 epochs
-# without improvement; only that single best checkpoint is scored on test.
+# **Model selection.** The checkpoint with the highest
+# **``val/bal_acc_stream_mean``** is kept -- the headline metric, just on the
+# validation fold. Training runs for at most 40 epochs and stops early after
+# 5 epochs without improvement; only that single best checkpoint is scored on
+# test.
 #
-# The warm-up scorer also ranks on balanced accuracy, but pooled over all
-# evaluation windows. The sealed phase instead averages it over
-# subject-session-context cells, so that every cell counts equally
-# regardless of how many windows it holds -- a different number from the
-# same predictions.
+# Averaging over sessions makes every session count equally regardless of
+# how many windows it holds. ``test/bal_acc``, also logged, pools all
+# windows instead -- a different number from the same predictions.
 
 # %%
 # Reproducing the baseline
@@ -179,7 +180,7 @@ recalibration allowed.
 #    #    machine, and safe to interrupt and re-run.
 #    neuralbench eeg _motor_imagery_stream --download
 #
-#    # 2. Preprocess into CACHE_DIR -- resample, filter, scale and window
+#    # 2. Preprocess into CACHE_DIR -- resample, filter and window
 #    #    every recording once, so each later run reads the cache instead.
 #    #    No GPU needed, and it fans out over SLURM when one is configured.
 #    neuralbench eeg _motor_imagery_stream --prepare
@@ -203,8 +204,10 @@ recalibration allowed.
 #    # 6. Full baseline -- foundation model (REVE), fine-tuned end to end.
 #    #    ~69M parameters against EEGNet's ~1.5k, all of them trainable here,
 #    #    so this one wants a datacentre GPU rather than a laptop; it also
-#    #    preprocesses at 200 Hz against the 120 Hz default, warming a second
-#    #    cache.
+#    #    applies its own preprocessing (200 Hz, scaled) instead of the
+#    #    task's, warming a second cache. Its scaler is fit on each whole
+#    #    recording, which a streamed submission cannot do, so its test score
+#    #    is optimistic.
 #    neuralbench eeg _motor_imagery_stream -m reve
 #
 # Add ``--dataset dreyer2023`` to any of these commands to run on the

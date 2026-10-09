@@ -176,7 +176,7 @@ class BrainModule(pl.LightningModule):
 
         metric_pred, metric_true = y_pred, y_true
         loss_pred, loss_true = y_pred, y_true
-        metric_subjects = batch.data["subject_id"]
+        metric_groups = batch.data.get("stream_id", batch.data["subject_id"])
         if y_pred.ndim == 3 and y_true.ndim == 3:
             # A dense prediction is time-major (B, T, C) -- braindecode's
             # convention -- while an extracted target is channel-major (B, C, T).
@@ -200,7 +200,7 @@ class BrainModule(pl.LightningModule):
             metric_pred = loss_pred = y_pred[valid]
             metric_true = loss_true = y_true[valid]
             # Metric rows are frames, not windows: (B, 1) -> (B, T).
-            metric_subjects = metric_subjects.reshape(-1, 1).expand_as(valid)[valid]
+            metric_groups = metric_groups.reshape(-1, 1).expand_as(valid)[valid]
             y_pred = y_pred.masked_fill(~valid.unsqueeze(-1), torch.nan)
             y_pred = y_pred.reshape(y_pred.shape[0], -1)
             y_true = y_true.reshape(y_true.shape[0], -1)
@@ -249,7 +249,7 @@ class BrainModule(pl.LightningModule):
             assert isinstance(metric, Metric)
             if metric_name.startswith(step_name) and metric_true.numel():
                 if isinstance(metric, GroupedMetric):
-                    metric.update(metric_pred, metric_true, metric_subjects)
+                    metric.update(metric_pred, metric_true, metric_groups)
                 else:
                     if isinstance(metric, MultilabelConfusionMatrix):
                         metric.update(metric_pred, metric_true.int())

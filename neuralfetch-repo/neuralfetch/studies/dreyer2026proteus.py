@@ -32,6 +32,8 @@ class Dreyer2026Proteus(study.Study):
     - One ``Stimulus`` event per cue, from the cue to the end of the trial
       (8 s); ``code`` is 0/1/2 for mi/sub/word. Baseline runs have no cue
       events. ``task`` and ``run`` come from the BIDS file names.
+    - Timelines are listed in recording order within each session (by run
+      number); the two baselines share run 0.
     - Recordings are DC-coupled. This loader does not filter, re-reference,
       resample or clean artifacts.
     - No electrode coordinates are distributed; channel positions come from
@@ -87,8 +89,10 @@ class Dreyer2026Proteus(study.Study):
             raise FileNotFoundError(
                 f"No EDF recordings in {self.bids_root}; run study.download() first"
             )
-        for path in files:
-            entities = get_entities_from_fname(path.name)
+        all_entities = [get_entities_from_fname(path.name) for path in files]
+        # file names sort by task; run numbers give the recording order
+        all_entities.sort(key=lambda e: (e["subject"], e["session"], int(e["run"])))
+        for entities in all_entities:
             yield dict(
                 subject=entities["subject"],
                 session=entities["session"],
