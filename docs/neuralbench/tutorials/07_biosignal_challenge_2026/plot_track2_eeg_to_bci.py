@@ -79,7 +79,7 @@ recalibration allowed.
 #
 # Both versions share the split, target and loss. ``_motor_imagery_stream``
 # also feeds the signal in microvolts, without the default per-recording
-# scaler or clamping (resampling and filters stay; `Scaling inside the
+# scaler or clamping (resampling and filters stay; `Preprocessing inside the
 # model`_ shows how to scale each window instead), adds the per-session
 # balanced accuracy, defaults to the competition corpus, and ships
 # only the two other dataset variants these pages use, ``dreyer2023`` and
@@ -206,8 +206,8 @@ recalibration allowed.
 #    #    ~69M parameters against EEGNet's ~1.5k, all of them trainable here,
 #    #    so this one wants a datacentre GPU rather than a laptop; it also
 #    #    applies its own preprocessing (200 Hz, scaled per recording)
-#    #    instead of the task's, warming a second cache. See "Scaling inside
-#    #    the model" below to scale each window instead.
+#    #    instead of the task's, warming a second cache. See "Preprocessing
+#    #    inside the model" below to scale each window instead.
 #    neuralbench eeg _motor_imagery_stream -m reve
 #
 # Add ``--dataset dreyer2023`` to any of these commands to run on the
@@ -257,8 +257,8 @@ recalibration allowed.
 # out to SLURM.
 
 # %%
-# Scaling inside the model
-# ------------------------
+# Preprocessing inside the model
+# ------------------------------
 #
 # ``_motor_imagery_stream`` scales the signal to microvolts and no further:
 # MNE reads EEG in volts, and ``scale_factor: 1.0e+6`` multiplies each window
@@ -270,9 +270,9 @@ recalibration allowed.
 # the one it decodes, and the clamp at 20, which is in that scaler's units.
 #
 # To scale further, do it inside the model with
-# :class:`~neuraltrain.models.preprocessor.OnTheFlyPreprocessor`. It computes
-# its statistics on each window alone, and it has no weights, so the same
-# arguments rebuild it in your submission (see :doc:`How to Submit a Model
+# :class:`~neuraltrain.models.preprocessor.OnTheFlyPreprocessor`. It works on
+# each window alone, and it has no weights, so the same arguments rebuild it
+# in your submission (see :doc:`How to Submit a Model
 # <plot_submission_guide>`).
 #
 # NeuralBench runs it in the downstream wrapper, as
@@ -301,8 +301,15 @@ recalibration allowed.
 # - A per-window scaler removes the amplitude differences between windows. A
 #   float ``scaler`` multiplies by a fixed gain instead and keeps them, as the
 #   conversion to microvolts does.
-# - The module does not filter or resample; the task's extractor still does
-#   both.
+# - The module can also notch, band-pass and resample each window
+#   (``notch_filter``, ``filter`` and ``frequency``, from the input rate
+#   ``sfreq``). To keep the whole chain inside each window, turn those steps
+#   off in the extractor (``"data.neuro.frequency": "native"``,
+#   ``"data.neuro.filter": None``, ``"data.neuro.notch_filter": None``) and
+#   give them to the module with ``"sfreq": 500.0``, PROTEUS's recorded
+#   rate. Resampling then changes the number of samples the model receives,
+#   so the model has to accept any length, as models passed to
+#   ``evaluate_model`` must.
 # - ``models/luna.yaml`` and ``models/biot.yaml`` already scale this way.
 #   ``models/labram.yaml`` and ``models/cbramod.yaml`` keep a fixed gain of
 #   their own instead of microvolts (``scale_factor: 1.0e+4``, units of

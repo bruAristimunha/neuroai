@@ -123,10 +123,13 @@ it is out of date.
 #   Codabench passes windows at whatever ``meta["sfreq"]`` reports and
 #   expects model-specific preprocessing to live in ``submission.py``, so a
 #   model lifted from a run needs its config's chain reproduced there.
-#   Scaling done with ``OnTheFlyPreprocessor`` (see *Scaling inside the
-#   model* on the Track 2 and 3 pages) carries over as it is: it has no
-#   weights and ``neuraltrain`` is on the evaluation image, so build it with
-#   the same arguments in ``load_model`` and apply it in ``predict``.
+#   Preprocessing done with ``OnTheFlyPreprocessor`` (see *Preprocessing
+#   inside the model* on the Track 2 and 3 pages) carries over as it is: it
+#   has no weights and ``neuraltrain`` is on the evaluation image, so build
+#   it with the same arguments in ``load_model`` and apply it in
+#   ``predict``. Its ``sfreq``, ``notch_filter``, ``filter`` and
+#   ``frequency`` arguments need a ``neuraltrain`` recent enough to have
+#   them.
 # - **Portability.** Write the wrapper against ``meta`` and the batches
 #   alone. A model that reads a dataset name, a file path, a subject id or
 #   a hard-coded channel count can pass warm-up and break on the sealed

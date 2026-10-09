@@ -66,8 +66,8 @@ reconstruction because a sparse wearable montage supports it poorly.
    signal at its native rate, unfiltered and unscaled apart from the
    conversion to microvolts, so no whole-recording statistic reaches the
    model; a model config that sets its own preprocessing, such as
-   ``reve``'s, overrides this. `Scaling inside the model`_ below shows how
-   to scale each window instead.
+   ``reve``'s, overrides this. `Preprocessing inside the model`_ below
+   shows how to preprocess each window instead.
 """
 
 # %%
@@ -225,7 +225,8 @@ reconstruction because a sparse wearable montage supports it poorly.
 #    #    so this one wants a datacentre GPU rather than a laptop; it also
 #    #    applies its own preprocessing (200 Hz, filtered, scaled per
 #    #    recording) instead of the task's raw signal, warming a second cache.
-#    #    See "Scaling inside the model" below to scale each window instead.
+#    #    See "Preprocessing inside the model" below to scale each window
+#    #    instead.
 #    neuralbench eeg _sleep_onset_stream -m reve
 #
 # :ref:`pretrained-weights` covers the hub cache, and no run has a CPU
@@ -259,8 +260,8 @@ reconstruction because a sparse wearable montage supports it poorly.
 # out to SLURM.
 
 # %%
-# Scaling inside the model
-# ------------------------
+# Preprocessing inside the model
+# ------------------------------
 #
 # ``_sleep_onset_stream`` keeps one preprocessing step, the conversion to
 # microvolts: MNE reads EEG in volts, and ``scale_factor: 1.0e+6`` multiplies
@@ -274,15 +275,15 @@ reconstruction because a sparse wearable montage supports it poorly.
 # five minutes after onset included, so every window would carry statistics
 # of what comes after it; the clamp is in that scaler's units.
 #
-# To scale further, do it inside the model with
-# :class:`~neuraltrain.models.preprocessor.OnTheFlyPreprocessor`. It computes
-# its statistics on each window alone, and it has no weights, so the same
-# arguments rebuild it in your submission (see :doc:`How to Submit a Model
+# To get that preprocessing back, run it inside the model with
+# :class:`~neuraltrain.models.preprocessor.OnTheFlyPreprocessor`. It works on
+# each window alone, and it has no weights, so the same arguments rebuild it
+# in your submission (see :doc:`How to Submit a Model
 # <plot_submission_guide>`).
 #
 # NeuralBench runs it in the downstream wrapper, as
 # ``downstream_model_wrapper.on_the_fly_preprocessor``. Here with the
-# benchmark task's scaler and clamp, applied to each window:
+# benchmark task's complete preprocessing, applied to each window:
 #
 # .. code-block:: python
 #
@@ -293,6 +294,10 @@ reconstruction because a sparse wearable montage supports it poorly.
 #        name="my-fm",
 #        overrides={
 #            "downstream_model_wrapper.on_the_fly_preprocessor": {
+#                "sfreq": 128.0,  # the rate of the windows it receives
+#                "notch_filter": [50.0, 60.0],
+#                "filter": [0.1, 75.0],
+#                "frequency": 120.0,
 #                "scaler": "RobustScaler",
 #                "scale_dim": -1,  # per channel, over the window's samples
 #                "clamp": 20.0,
@@ -306,8 +311,14 @@ reconstruction because a sparse wearable montage supports it poorly.
 # - A per-window scaler removes the amplitude differences between the
 #   windows of a recording. A float ``scaler`` multiplies by a fixed gain
 #   instead and keeps them, as the conversion to microvolts does.
-# - The module does not filter or resample: on this task the windows reach
-#   it at 128 Hz, unfiltered.
+# - ``notch_filter``, ``filter`` and ``frequency`` take the extractor's
+#   arguments and act on each window's spectrum, from its rate ``sfreq``.
+#   Its frequency bins are 0.2 Hz apart for a 5 s window, so the 0.1 Hz
+#   high-pass removes the window's mean; the 75 Hz low-pass is above the
+#   64 Hz Nyquist and changes nothing, as in the benchmark task.
+# - Resampling changes the number of samples the model receives (600
+#   instead of 640), so the model has to accept any length, as models passed
+#   to ``evaluate_model`` must.
 # - ``models/luna.yaml`` and ``models/biot.yaml`` already scale this way.
 #   ``models/labram.yaml`` and ``models/cbramod.yaml`` keep a fixed gain of
 #   their own instead of microvolts (``scale_factor: 1.0e+4``, units of
