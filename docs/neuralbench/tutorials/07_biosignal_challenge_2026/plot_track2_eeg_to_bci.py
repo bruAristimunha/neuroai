@@ -205,9 +205,11 @@ recalibration allowed.
 #    # 6. Full baseline -- foundation model (REVE), fine-tuned end to end.
 #    #    ~69M parameters against EEGNet's ~1.5k, all of them trainable here,
 #    #    so this one wants a datacentre GPU rather than a laptop; it also
-#    #    applies its own preprocessing (200 Hz, scaled per recording)
-#    #    instead of the task's, warming a second cache. See "Preprocessing
-#    #    inside the model" below to scale each window instead.
+#    #    applies its own preprocessing (200 Hz, scaled) instead of the
+#    #    task's, warming a second cache. Its scaler is fit on each whole
+#    #    recording, which a streamed submission cannot do, so its test score
+#    #    is optimistic; see "Preprocessing inside the model" below to scale
+#    #    each window instead.
 #    neuralbench eeg _motor_imagery_stream -m reve
 #
 # Add ``--dataset dreyer2023`` to any of these commands to run on the

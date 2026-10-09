@@ -5,11 +5,14 @@
 # LICENSE file in the root directory of this source tree.
 
 import functools
+from pathlib import Path
 
 import pytest
 import torch
 from exca import ConfDict
 
+from neuralbench import registry
+from neuralbench.data import Data
 from neuralbench.defaults.metrics import (
     get_classification_metric_configs,
     get_sleep_onset_metric_configs,
@@ -117,6 +120,43 @@ def test_unsupported_gpu_check_survives_a_driver_error(
         _warn_unsupported_gpu()
 
 
+def test_plugin_root_adds_dataset_to_shipped_task(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dataset = tmp_path / "eeg" / "seizure" / "datasets" / "plugin2026.yaml"
+    dataset.parent.mkdir(parents=True)
+    dataset.write_text("data:\n  study:\n    source:\n      name: Plugin2026Eeg\n")
+    monkeypatch.setattr(
+        registry, "_all_task_roots", lambda: [registry.BASE_DIR / "tasks", tmp_path]
+    )
+    config = merge_task_config("eeg", "seizure", "plugin2026")
+    assert config["data.study.source.name"] == "Plugin2026Eeg"
+    assert config["data.study.split.split_by"] == "subject", "task split not inherited"
+
+
+def test_replaced_study_drops_default_study_query(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dataset = tmp_path / "eeg" / "word" / "datasets" / "plugin2026.yaml"
+    dataset.parent.mkdir(parents=True)
+    dataset.write_text(
+        "data:\n  study:\n    =replace=: true\n    source:\n      name: Plugin2026Eeg\n"
+    )
+    monkeypatch.setattr(
+        registry, "_all_task_roots", lambda: [registry.BASE_DIR / "tasks", tmp_path]
+    )
+    source = merge_task_config("eeg", "word", "plugin2026")["data.study.source"]
+    assert "query" not in source, f"default study's query leaked: {source['query']!r}"
+    assert {"path", "infra"} <= set(source)
+
+
+def test_eeg_image_reports_competition_topk() -> None:
+    metrics = merge_task_config("eeg", "image", None)["test_full_retrieval_metrics"]
+    names = {m["log_name"] for m in metrics}
+    expected = {"top5_acc_subject-agg", "top1_acc_subject-agg"}
+    assert expected <= names, "Track 1 docs point to these Top-k metrics"
+
+
 @pytest.mark.parametrize("preset", list(ALL_DOWNSTREAM_WRAPPERS))
 @pytest.mark.parametrize("model_name", FM_MODELS)
 def test_adaptation_overlay_leaves_a_valid_optimizer(model_name: str, preset: str):
@@ -208,8 +248,11 @@ _STREAM_TO_CORE_DATASET: dict[str, dict[str | None, str | None]] = {
 )
 def test_stream_task_diff(task: str, dataset: str | None):
     core_dataset = _STREAM_TO_CORE_DATASET[task].get(dataset, dataset)
-    core = merge_task_config("eeg", task, core_dataset).flat()
-    stream = merge_task_config("eeg", f"_{task}_stream", dataset).flat()
+    core_config = merge_task_config("eeg", task, core_dataset)
+    stream_config = merge_task_config("eeg", f"_{task}_stream", dataset)
+    for config in (core_config, stream_config):
+        Data(**config["data"])
+    core, stream = core_config.flat(), stream_config.flat()
     diff = {k: stream.get(k) for k in core | stream if core.get(k) != stream.get(k)}
     metrics = _STREAM_METRICS[task](stream["brain_model_output_size"])
     assert diff == {

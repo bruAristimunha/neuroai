@@ -21,16 +21,32 @@ these tests guard the end-to-end wiring:
 
 from __future__ import annotations
 
-import pandas as pd
+from pathlib import Path
 
+import pandas as pd
+import pytest
+
+from neuralbench import registry
 from neuralbench.plots.tables import _collapse_feature_based_baselines
 from neuralbench.registry import (
+    ALL_DATASETS,
     DEVICE_BASELINE_MODELS,
     FEATURE_BASED_BY_TASK,
     SKLEARN_BASELINE_MODELS,
     _expand_models,
+    _resolve_dataset_stem,
     _task_aware_baseline,
 )
+
+
+def test_every_listed_dataset_name_resolves() -> None:
+    for device, tasks in ALL_DATASETS.items():
+        for task, names in tasks.items():
+            stems = [_resolve_dataset_stem(device, task, name) for name in names]
+            assert stems[0] is None, f"{device}/{task}: default must use config.yaml"
+            assert None not in stems[1:], f"{device}/{task}: {names} -> {stems}"
+            lower = [_resolve_dataset_stem(device, task, n.lower()) for n in names]
+            assert lower == stems, f"{device}/{task}: lowercase names resolve differently"
 
 
 def test_device_baseline_models_meg_has_riemannian_pipelines() -> None:
@@ -38,8 +54,8 @@ def test_device_baseline_models_meg_has_riemannian_pipelines() -> None:
     assert "chance" in meg and "dummy" in meg
     assert "cov_ts_lr" in meg
     assert "cov_ts_ridge" in meg
-    # Xdawn / CoSpectra are intentionally EEG-only.
-    assert "xdawn_ts_lr" not in meg
+    # Xdawn covers the event-locked MEG tasks; CoSpectra stays EEG-only.
+    assert "xdawn_ts_lr" in meg
     assert "cospectra_log_lr" not in meg
 
 
@@ -148,3 +164,34 @@ def test_collapse_relabels_meg_sklearn_row_as_handcrafted() -> None:
     # And the alias we collapse to is never a member of SKLEARN_BASELINE_MODELS
     # (otherwise the plot-time display map would look it up as a pipeline name).
     assert "feature_based" not in SKLEARN_BASELINE_MODELS
+
+
+def test_load_default_config_overlays_plugin_device_defaults(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    device_dir = tmp_path / "meg"
+    device_dir.mkdir()
+    (device_dir / "config.yaml").write_text("data:\n  neuro:\n    name: MegExtractor\n")
+    monkeypatch.setattr(
+        registry, "_all_defaults_roots", lambda: [registry.DEFAULTS_DIR, tmp_path]
+    )
+    overlaid = registry.load_default_config("meg")
+    base = registry.load_default_config()
+    assert overlaid["data"]["neuro"]["name"] == "MegExtractor"
+    assert base["data"]["neuro"]["name"] == "EegExtractor"
+    # A device with no overlay falls back to the base.
+    assert registry.load_default_config("eeg") == base
+    # The overlay is partial: base keys it does not mention survive.
+    assert overlaid["data"]["neuro"]["frequency"] == base["data"]["neuro"]["frequency"]
+
+
+def test_debug_study_queries_merge_plugin_roots(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "debug_study.yaml").write_text("Plugin2026Study: subject_index < 3\n")
+    monkeypatch.setattr(
+        registry, "_all_defaults_roots", lambda: [registry.DEFAULTS_DIR, tmp_path]
+    )
+    queries = registry._build_debug_study_queries()
+    assert queries["Plugin2026Study"] == "subject_index < 3"
+    assert "Lopez2017Tuab" in queries

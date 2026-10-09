@@ -28,7 +28,6 @@ from lightning.pytorch.loggers import CSVLogger, WandbLogger
 from lightning.pytorch.loggers.logger import DummyLogger, Logger
 from pydantic import model_validator
 from torch.utils.data import DataLoader
-from torchmetrics import Metric
 from tqdm import tqdm
 
 import neuralset as ns
@@ -225,10 +224,6 @@ class Experiment(BaseExperiment):
         if self.validate_before_training:
             LOGGER.info("Validating once before starting training...")
             trainer.validate(model=self._brain_module, dataloaders=[valid_loader])
-            # states reset in inference mode can't be updated in place by fit
-            for module in self._brain_module.modules():
-                if isinstance(module, Metric):
-                    module.reset()
 
         # Train model
         trainer.fit(
@@ -278,6 +273,18 @@ class Experiment(BaseExperiment):
         callbacks: list[Callback] = []
         if self.data.stream_by is not None:
             callbacks.append(ResetPerStream())
+            neuro = self.data.neuro
+            if (
+                is_test
+                and isinstance(neuro, ns.extractors.MneRaw)
+                and neuro.scaler is not None
+            ):
+                LOGGER.warning(
+                    "Streamed test with data.neuro.scaler=%s, fit on each whole "
+                    "recording: windows see future signal, so scores are optimistic "
+                    "for a streamed submission.",
+                    neuro.scaler,
+                )
         if "confusion_matrix" in [metric.log_name for metric in self.metrics]:
             labels: list[str] | None = None
             if isinstance(self.data.target, ns.extractors.LabelEncoder):
