@@ -314,7 +314,8 @@ reconstruction because a sparse wearable montage supports it poorly.
 # - ``notch_filter``, ``filter`` and ``frequency`` take the extractor's
 #   arguments and act on each window's spectrum, from its rate ``sfreq``.
 #   Its frequency bins are 0.2 Hz apart for a 5 s window, so the 0.1 Hz
-#   high-pass removes the window's mean; the 75 Hz low-pass is above the
+#   high-pass removes the window's mean, and the notch removes the bins
+#   within 1 Hz of 50 and 60 Hz; the 75 Hz low-pass is above the
 #   64 Hz Nyquist and changes nothing, as in the benchmark task.
 # - Resampling changes the number of samples the model receives (600
 #   instead of 640), so the model has to accept any length, as models passed

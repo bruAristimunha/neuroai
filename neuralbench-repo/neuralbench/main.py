@@ -225,9 +225,7 @@ class Experiment(BaseExperiment):
         if self.validate_before_training:
             LOGGER.info("Validating once before starting training...")
             trainer.validate(model=self._brain_module, dataloaders=[valid_loader])
-            # Lightning validates in inference mode and resets the logged metrics
-            # there, so their states become inference tensors, which the no_grad
-            # validation inside fit cannot update in place (e.g. MeanSquaredError).
+            # states reset in inference mode can't be updated in place by fit
             for module in self._brain_module.modules():
                 if isinstance(module, Metric):
                     module.reset()

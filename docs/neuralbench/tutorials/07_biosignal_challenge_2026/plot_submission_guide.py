@@ -128,8 +128,8 @@ it is out of date.
 #   has no weights and ``neuraltrain`` is on the evaluation image, so build
 #   it with the same arguments in ``load_model`` and apply it in
 #   ``predict``. Its ``sfreq``, ``notch_filter``, ``filter`` and
-#   ``frequency`` arguments need a ``neuraltrain`` recent enough to have
-#   them.
+#   ``frequency`` arguments are newer than ``neuraltrain`` 0.3.1: check that
+#   the evaluation image's ``neuraltrain`` has them before relying on them.
 # - **Portability.** Write the wrapper against ``meta`` and the batches
 #   alone. A model that reads a dataset name, a file path, a subject id or
 #   a hard-coded channel count can pass warm-up and break on the sealed

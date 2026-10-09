@@ -566,22 +566,27 @@ class DownstreamWrapper(pydantic.BaseModel):
 
         with torch.no_grad():
             model.eval()
+            model_batch = dummy_batch
+            if preprocessor is not None:
+                input_key = next(iter(model_batch))
+                x, _ = preprocessor(
+                    model_batch[input_key], model_batch.get("channel_positions")
+                )
+                model_batch = {**model_batch, input_key: x}
             if channel_adapter is not None:
-                input_key = next(iter(dummy_batch))
-                x = dummy_batch[input_key]
+                input_key = next(iter(model_batch))
+                x = model_batch[input_key]
                 assert x is not None
                 if adapter_needs_positions:
-                    subject_ids = dummy_batch.get(
+                    subject_ids = model_batch.get(
                         "subject_ids",
                         torch.zeros(x.shape[0], dtype=torch.long),
                     )
-                    ch_pos = dummy_batch.get("channel_positions")
+                    ch_pos = model_batch.get("channel_positions")
                     x_adapted = channel_adapter(x, subject_ids, ch_pos)
                 else:
                     x_adapted = channel_adapter(x)
                 model_batch = {input_key: x_adapted}
-            else:
-                model_batch = dummy_batch
             probe_batch_dim = 0
             if self.probe_layer is None:
                 orig_output = model(**model_batch)

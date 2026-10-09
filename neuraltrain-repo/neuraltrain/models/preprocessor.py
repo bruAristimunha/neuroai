@@ -32,7 +32,7 @@ class OnTheFlyPreprocessor(BaseModelConfig):
         `frequency`.
     notch_filter :
         Frequency or frequencies (Hz) to remove, with their harmonics up to 300 Hz, as the
-        extractors do.
+        extractors do. The spectrum within 1 Hz of each is removed.
     filter :
         Band-pass limits ``(l_freq, h_freq)`` in Hz; either can be None.
     frequency :
@@ -190,13 +190,12 @@ class OnTheFlyPreprocessorModel(nn.Module):
         assert sfreq is not None  # checked by the config
         n_times = x.shape[-1]
         freqs = torch.fft.rfftfreq(n_times, d=1.0 / sfreq, device=x.device)
-        # ponytail: brick-wall masks, exact on the window's frequency bins and ringing
-        # between them; a windowed FIR if the ringing matters.
+        # brick-wall masks: exact on the window's frequency bins, ringing between them
         keep = torch.ones_like(freqs, dtype=torch.bool)
-        notch = self.notch_filter
-        for base in [notch] if isinstance(notch, (int, float)) else notch or []:
+        notch = self.notch_filter if self.notch_filter is not None else []
+        for base in notch if isinstance(notch, list) else [notch]:
             for harmonic in torch.arange(base, min(sfreq / 2, 301), base).tolist():
-                keep &= (freqs - harmonic).abs() >= sfreq / n_times  # its nearest bins
+                keep &= (freqs - harmonic).abs() > 1.0
         if self.filter is not None:
             l_freq, h_freq = self.filter
             if l_freq is not None:
@@ -206,7 +205,6 @@ class OnTheFlyPreprocessorModel(nn.Module):
         n_out = (
             n_times if self.frequency is None else round(n_times * self.frequency / sfreq)
         )
-        # irfft trims (or zero-pads) the spectrum to the new length: an ideal
-        # anti-aliasing low-pass when downsampling.
+        # irfft trims or zero-pads the spectrum: an ideal low-pass when downsampling
         spectrum = torch.fft.rfft(x, dim=-1) * keep
         return torch.fft.irfft(spectrum, n=n_out, dim=-1) * (n_out / n_times)

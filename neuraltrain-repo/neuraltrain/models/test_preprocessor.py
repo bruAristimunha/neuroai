@@ -187,5 +187,8 @@ def test_on_the_fly_preprocessor_filters_and_resamples() -> None:
     t_out = torch.arange(480) / 120.0
     expected = torch.sin(2 * torch.pi * 10 * t_out).expand(2, 3, 480)
     torch.testing.assert_close(out, expected, atol=1e-4, rtol=0)
+    between_bins = torch.sin(2 * torch.pi * 50.1 * t)[None, None]
+    out, _ = OnTheFlyPreprocessor(sfreq=sfreq, notch_filter=50.0).build()(between_bins)
+    assert out.std() < 0.25 * between_bins.std(), "line noise between bins got through"
     with pytest.raises(ValueError, match="sfreq"):
         OnTheFlyPreprocessor(filter=(1.0, 40.0))

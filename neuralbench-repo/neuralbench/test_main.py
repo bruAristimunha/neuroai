@@ -16,6 +16,7 @@ from exca import TaskInfra
 from exca.cachedict import CacheDict
 from torch import nn
 from torch.utils.data import DataLoader
+from torchmetrics import MeanSquaredError
 
 from neuraltrain.augmentations import BandRotationConfig
 from neuraltrain.losses import BaseLoss
@@ -133,6 +134,43 @@ def test_only_rank_zero_deletes_the_checkpoint(tmp_path, global_rank: int) -> No
     assert checkpoint.exists() == (global_rank != 0), (
         "a non-zero rank must leave the checkpoint for rank zero to test with"
     )
+
+
+def test_fit_after_validate_before_training_updates_in_place_metrics(tmp_path) -> None:
+    module = BrainModule(
+        model=nn.Linear(2, 1),
+        loss=nn.MSELoss(),
+        metrics={"mse": MeanSquaredError()},
+        lightning_optimizer_config=LightningOptimizer(
+            optimizer={"name": "SGD", "lr": 0.1}  # type: ignore[arg-type]
+        ),
+    )
+    batch = SimpleNamespace(
+        data={
+            "neuro": torch.randn(4, 2),
+            "target": torch.randn(4, 1),
+            "subject_id": torch.zeros(4, 1, dtype=torch.long),
+        }
+    )
+    loader: DataLoader = DataLoader(tp.cast(tp.Any, [batch]), batch_size=None)
+    experiment = Experiment.model_construct(  # type: ignore[call-arg]
+        validate_before_training=True
+    )
+    experiment._brain_module = module
+    trainer = pl.Trainer(
+        accelerator="cpu",
+        devices=1,
+        max_epochs=1,
+        logger=False,
+        enable_checkpointing=False,
+        enable_progress_bar=False,
+        enable_model_summary=False,
+        default_root_dir=tmp_path,
+    )
+
+    experiment.fit(trainer, loader, loader)
+
+    assert trainer.current_epoch == 1
 
 
 def _make_experiment_with_capturing_build(
