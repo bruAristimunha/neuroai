@@ -322,11 +322,13 @@ recalibration allowed.
 #   ``"data.neuro.clamp": 15`` with ``None`` for both, plus an
 #   ``on_the_fly_preprocessor`` of ``{"scaler": "StandardScaler",
 #   "scale_dim": -1, "clamp": 15.0}``.
-# - For a model it builds from a config, the wrapper asks for the model
-#   without its output layer and adds a probe. Braindecode's EEGNet cannot be
-#   built that way, so the stock ``-m eegnet`` baseline takes no wrapper and
-#   trains on the microvolts as they are. In a model of your own, call the
-#   module in ``forward``:
+# - The stock ``-m eegnet`` config sets no wrapper, so it trains on the
+#   microvolts as they are. A wrapper builds its model without the output
+#   layer, which braindecode's EEGNet does not allow, so to give EEGNet one,
+#   keep that layer and turn the probe off in ``models/eegnet.yaml``:
+#   ``brain_model_config.kwargs.n_outputs`` set to the task's output size
+#   (3) and ``downstream_model_wrapper.probe_config: null``.
+# - In a model of your own, call the module in ``forward``:
 #
 #   .. code-block:: python
 #
