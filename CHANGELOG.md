@@ -4,6 +4,7 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- `neuralbench`: `-m eegnex` runs braindecode's EEGNeX (#303).
 - `neuralbench`: `--plot-cached` writes under `outputs/<device>/`, and `core/` and `full/` hold one folder per foundation-model adaptation strategy (`default/` without `-w`), so the core bar chart moves from `outputs/core/core_bar_chart.png` to `outputs/eeg/core/default/core_bar_chart.png`. The figures add category leaderboards and a labelled bar chart, and replace the separate non-EEG plotting module (#302).
 - docs: the NeuralBench landing page adds per-category radar plots and a customizable model scatter plot (#302).
 - `neuralbench`: each device can ship a default-config overlay (`load_default_config(device)`), and `Data.drop_incomplete` drops windows missing an event for one of the extractors rather than extracting an invalid target for them (#302).

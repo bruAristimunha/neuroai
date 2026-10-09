@@ -114,17 +114,46 @@ it is out of date.
 # - **Units, on Track 4 only.** The task trains on radians, as emg2pose
 #   does; Codabench expects degrees. Convert (``x 57.29578``) in
 #   ``predict``.
-# - **Preprocessing.** The EEG tasks resample to 120 Hz and apply a
-#   0.1-75 Hz bandpass, a 50/60 Hz notch, a ``RobustScaler`` and a clamp at
-#   20 before the model sees anything; ``emg pose`` deliberately does none
-#   of it and feeds raw 2 kHz. Codabench passes windows at whatever
-#   ``meta["sfreq"]`` reports and expects model-specific preprocessing to
-#   live in ``submission.py``, so a model lifted from a run needs its
-#   config's chain reproduced there.
+# - **Preprocessing.** The EEG benchmark tasks resample to 120 Hz and apply
+#   a 0.1-75 Hz bandpass, a 50/60 Hz notch, a ``RobustScaler`` and a clamp
+#   at 20 before the model sees anything; ``emg pose`` deliberately does none
+#   of it and feeds raw 2 kHz. The stream tasks of Tracks 2 and 3 replace the
+#   scaler and the clamp with a fixed conversion to microvolts, and Track 3's
+#   also drops the resampling and the filters.
+#   Codabench passes windows at whatever ``meta["sfreq"]`` reports and
+#   expects model-specific preprocessing to live in ``submission.py``, so a
+#   model lifted from a run needs its config's chain reproduced there;
+#   preprocessing done :ref:`inside the model
+#   <preprocessing-inside-the-model>` ships with it.
 # - **Portability.** Write the wrapper against ``meta`` and the batches
 #   alone. A model that reads a dataset name, a file path, a subject id or
 #   a hard-coded channel count can pass warm-up and break on the sealed
 #   cohort.
+
+# %%
+# .. _preprocessing-inside-the-model:
+#
+# Preprocessing inside the model
+# ------------------------------
+#
+# Preprocessing that runs on each window inside the model uses no statistic
+# of the rest of the recording, and ships with the model in
+# ``submission.py``. You can write such a module yourself;
+# :class:`~neuraltrain.models.preprocessor.OnTheFlyPreprocessor` is one
+# ready-made option for common steps such as scaling and clamping (see its
+# API page for the options). NeuralBench applies it when passed as
+# ``downstream_model_wrapper.on_the_fly_preprocessor``, for example in the
+# ``overrides`` of ``evaluate_model``. In a model of your own, call it in
+# ``forward``:
+#
+# .. code-block:: python
+#
+#    from neuraltrain.models.preprocessor import OnTheFlyPreprocessor
+#
+#    preprocess = OnTheFlyPreprocessor(
+#        scaler="RobustScaler", scale_dim=-1, clamp=20.0  # per window and channel
+#    ).build()
+#    x, _ = preprocess(x)  # (batch, channels, samples)
 
 # %%
 # Will a starter-kit score match the leaderboard?

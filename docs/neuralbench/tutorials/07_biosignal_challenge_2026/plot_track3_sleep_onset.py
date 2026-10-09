@@ -66,7 +66,8 @@ reconstruction because a sparse wearable montage supports it poorly.
    signal at its native rate, unfiltered and unscaled apart from the
    conversion to microvolts, so no whole-recording statistic reaches the
    model; a model config that sets its own preprocessing, such as
-   ``reve``'s, overrides this.
+   ``reve``'s, overrides this. To preprocess each window, see
+   :ref:`preprocessing-inside-the-model`.
 """
 
 # %%

@@ -79,7 +79,8 @@ recalibration allowed.
 #
 # Both versions share the split, target and loss. ``_motor_imagery_stream``
 # also feeds the signal in microvolts, without the default per-recording
-# scaler or clamping (resampling and filters stay), adds the per-session
+# scaler or clamping (resampling and filters stay; to scale each window, see
+# :ref:`preprocessing-inside-the-model`), adds the per-session
 # balanced accuracy, defaults to the competition corpus, and ships
 # only the two other dataset variants these pages use, ``dreyer2023`` and
 # ``tangermann2012``; the other MI corpora are variants of ``motor_imagery``.
