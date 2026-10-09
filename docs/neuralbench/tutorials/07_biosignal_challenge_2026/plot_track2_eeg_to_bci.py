@@ -260,11 +260,16 @@ recalibration allowed.
 # Scaling inside the model
 # ------------------------
 #
-# ``_motor_imagery_stream`` drops two steps of the benchmark task's
-# preprocessing, the ``RobustScaler`` and the clamp at 20. Both run at
-# extraction, and the scaler is fit on each recording as a whole, so it would
-# give a streamed model statistics of the windows that come after the one it
-# decodes. To scale the input again, do it inside the model with
+# ``_motor_imagery_stream`` scales the signal to microvolts and no further:
+# MNE reads EEG in volts, and ``scale_factor: 1.0e+6`` multiplies each window
+# by the same constant as it is read, so the scaling carries no information
+# about the rest of the recording. A model without preprocessing of its own,
+# such as the stock ``-m eegnet`` baseline, gets these microvolts. The task
+# drops the benchmark task's ``RobustScaler``, which is fit on each recording
+# as a whole and would give a streamed model statistics of the windows after
+# the one it decodes, and the clamp at 20, which is in that scaler's units.
+#
+# To scale further, do it inside the model with
 # :class:`~neuraltrain.models.preprocessor.OnTheFlyPreprocessor`. It computes
 # its statistics on each window alone, and it has no weights, so the same
 # arguments rebuild it in your submission (see :doc:`How to Submit a Model
@@ -294,13 +299,16 @@ recalibration allowed.
 # - Keep ``scale_dim: -1``: without it, the statistics pool over the whole
 #   batch and mix windows.
 # - A per-window scaler removes the amplitude differences between windows. A
-#   float ``scaler`` multiplies by a fixed gain instead and keeps them.
+#   float ``scaler`` multiplies by a fixed gain instead and keeps them, as the
+#   conversion to microvolts does.
 # - The module does not filter or resample; the task's extractor still does
 #   both.
 # - ``models/luna.yaml`` and ``models/biot.yaml`` already scale this way.
-#   ``models/reve.yaml`` scales each recording at extraction, so ``-m reve``
-#   brings whole-recording statistics back. To scale REVE's input per
-#   window instead, run it through ``evaluate_model`` as in
+#   ``models/labram.yaml`` and ``models/cbramod.yaml`` keep a fixed gain of
+#   their own instead of microvolts (``scale_factor: 1.0e+4``, units of
+#   0.1 mV). ``models/reve.yaml`` scales each recording at extraction, so
+#   ``-m reve`` brings whole-recording statistics back. To scale REVE's input
+#   per window instead, run it through ``evaluate_model`` as in
 #   :doc:`Evaluating your own model
 #   </neuralbench/auto_examples/quickstart/03_evaluate_your_own_model>`, and
 #   replace its ``"data.neuro.scaler": "StandardScaler"`` and
@@ -309,8 +317,9 @@ recalibration allowed.
 #   "scale_dim": -1, "clamp": 15.0}``.
 # - For a model it builds from a config, the wrapper asks for the model
 #   without its output layer and adds a probe. Braindecode's EEGNet cannot be
-#   built that way, so the stock ``-m eegnet`` baseline takes no wrapper. In
-#   a model of your own, call the module in ``forward``:
+#   built that way, so the stock ``-m eegnet`` baseline takes no wrapper and
+#   trains on the microvolts as they are. In a model of your own, call the
+#   module in ``forward``:
 #
 #   .. code-block:: python
 #

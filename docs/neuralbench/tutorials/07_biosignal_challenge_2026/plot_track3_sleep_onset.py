@@ -262,12 +262,19 @@ reconstruction because a sparse wearable montage supports it poorly.
 # Scaling inside the model
 # ------------------------
 #
-# ``_sleep_onset_stream`` drops all of the benchmark task's preprocessing:
-# resampling to 120 Hz, the 0.1-75 Hz band-pass, the 50 and 60 Hz notches,
-# the ``RobustScaler`` and the clamp at 20. They run at extraction on each
-# recording as a whole, and the scaler is fit on it, the five minutes after
-# onset included, so every window would carry statistics of what comes after
-# it. To scale the input again, do it inside the model with
+# ``_sleep_onset_stream`` keeps one preprocessing step, the conversion to
+# microvolts: MNE reads EEG in volts, and ``scale_factor: 1.0e+6`` multiplies
+# each window by the same constant as it is read, so the scaling carries no
+# information about the rest of the recording. A model without preprocessing
+# of its own, such as the stock ``-m eegnet`` baseline, gets these microvolts
+# at 128 Hz, unfiltered. The task drops the rest of the benchmark task's
+# preprocessing: resampling to 120 Hz, the 0.1-75 Hz band-pass, the 50 and
+# 60 Hz notches, the ``RobustScaler`` and the clamp at 20. They run at
+# extraction on each recording as a whole, and the scaler is fit on it, the
+# five minutes after onset included, so every window would carry statistics
+# of what comes after it; the clamp is in that scaler's units.
+#
+# To scale further, do it inside the model with
 # :class:`~neuraltrain.models.preprocessor.OnTheFlyPreprocessor`. It computes
 # its statistics on each window alone, and it has no weights, so the same
 # arguments rebuild it in your submission (see :doc:`How to Submit a Model
@@ -298,13 +305,15 @@ reconstruction because a sparse wearable montage supports it poorly.
 #   batch and mix windows.
 # - A per-window scaler removes the amplitude differences between the
 #   windows of a recording. A float ``scaler`` multiplies by a fixed gain
-#   instead and keeps them.
+#   instead and keeps them, as the conversion to microvolts does.
 # - The module does not filter or resample: on this task the windows reach
 #   it at 128 Hz, unfiltered.
 # - ``models/luna.yaml`` and ``models/biot.yaml`` already scale this way.
-#   ``models/reve.yaml`` scales each recording at extraction, so ``-m reve``
-#   brings whole-recording statistics back. To scale REVE's input per
-#   window instead, run it through ``evaluate_model`` as in
+#   ``models/labram.yaml`` and ``models/cbramod.yaml`` keep a fixed gain of
+#   their own instead of microvolts (``scale_factor: 1.0e+4``, units of
+#   0.1 mV). ``models/reve.yaml`` scales each recording at extraction, so
+#   ``-m reve`` brings whole-recording statistics back. To scale REVE's input
+#   per window instead, run it through ``evaluate_model`` as in
 #   :doc:`Evaluating your own model
 #   </neuralbench/auto_examples/quickstart/03_evaluate_your_own_model>`, and
 #   replace its ``"data.neuro.scaler": "StandardScaler"`` and
@@ -313,8 +322,9 @@ reconstruction because a sparse wearable montage supports it poorly.
 #   "scale_dim": -1, "clamp": 15.0}``.
 # - For a model it builds from a config, the wrapper asks for the model
 #   without its output layer and adds a probe. Braindecode's EEGNet cannot be
-#   built that way, so the stock ``-m eegnet`` baseline takes no wrapper. In
-#   a model of your own, call the module in ``forward``:
+#   built that way, so the stock ``-m eegnet`` baseline takes no wrapper and
+#   trains on the microvolts as they are. In a model of your own, call the
+#   module in ``forward``:
 #
 #   .. code-block:: python
 #
